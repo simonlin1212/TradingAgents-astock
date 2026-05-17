@@ -42,29 +42,39 @@ def render_report(
     elapsed: float | None = None,
 ) -> None:
     """Render the full analysis report."""
-
+    theme = st.session_state.get("theme_choice", "暗黑模式")
+    if theme == "明亮模式":
+        text_color = "#1a1a1a"
+        dim_color = "#555"
+        card_bg = "linear-gradient(135deg, #e8e8e8 0%, #f5f5f5 100%)"
+        card_border = "#e0e0e0"
+    else:
+        text_color = "#f5f1eb"
+        dim_color = "#888"
+        card_bg = "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)"
+        card_border = "#333"
     color, cn_signal = _signal_style(signal)
 
     stats_html = ""
     if elapsed is not None:
         m, s = divmod(int(elapsed), 60)
-        stats_html = f'<div style="font-size:0.9rem; color:#888; margin-top:0.3rem;">耗时 {m}:{s:02d}</div>'
+        stats_html = f'<div style="font-size:0.9rem; color:{dim_color}; margin-top:0.3rem;">耗时 {m}:{s:02d}</div>'
 
     st.markdown(
         f"""
         <div style="
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            border: 1px solid #333;
+            background: {card_bg};
+            border: 1px solid {card_border};
             border-radius: 16px;
             padding: 2rem;
             text-align: center;
             margin: 1rem 0 2rem;
         ">
-            <div style="font-size:0.9rem; color:#888; letter-spacing:2px;">TRADING SIGNAL</div>
+            <div style="font-size:0.9rem; color:{dim_color}; letter-spacing:2px;">TRADING SIGNAL</div>
             <div style="font-size:3.5rem; font-weight:900; color:{color}; margin:0.3rem 0;">
                 {signal.upper()}
             </div>
-            <div style="font-size:1.2rem; color:#f5f1eb;">
+            <div style="font-size:1.2rem; color:{text_color};">
                 {ticker} · {trade_date}
             </div>
             {stats_html}
@@ -88,6 +98,18 @@ def render_report(
 
     st.markdown("---")
 
+    # 全局标题颜色覆盖
+    st.markdown(
+        f"""
+        <style>
+        h3, .stMarkdown h3 {{
+            color: {text_color} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
         st.markdown("### 👔 最终投资建议")
@@ -95,7 +117,19 @@ def render_report(
         st.markdown("---")
 
     st.markdown("### 📊 分析师报告")
-
+    st.markdown(
+        f"""
+        <style>
+        h3, .stMarkdown h3, [data-testid="stExpander"] summary p,
+        .st-emotion-cache-1aehpvj p, .st-emotion-cache-1h9usgw h3,
+        section[data-testid="stExpander"] summary,
+        .stMarkdown p, .stMarkdown li, .stMarkdown span {{
+            color: {text_color} !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     for key, title in _ANALYST_SECTIONS:
         content = final_state.get(key, "")
         if not content:

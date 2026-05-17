@@ -67,7 +67,7 @@ def _infer_active_stage(tracker: ProgressTracker) -> None:
             return
 
 
-def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -> None:
+def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker, start_date: str | None = None) -> None:
     """Execute the full pipeline in the current thread."""
     from cli.stats_handler import StatsCallbackHandler
     from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -80,7 +80,7 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
         callbacks=[stats],
     )
 
-    init_state = graph.propagator.create_initial_state(ticker, trade_date)
+    init_state = graph.propagator.create_initial_state(ticker, trade_date, start_date)
     args = graph.propagator.get_graph_args(callbacks=[stats])
 
     last_chunk: dict[str, Any] = {}
@@ -100,12 +100,12 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
 
     tracker.mark_complete(last_chunk, signal)
 
-
 def run_analysis_in_thread(
     ticker: str,
     trade_date: str,
     config: dict,
     tracker: ProgressTracker,
+    start_date: str | None = None,
 ) -> threading.Thread:
     """Launch the pipeline in a daemon thread. Returns the thread handle."""
     tracker.ticker = ticker
@@ -115,7 +115,7 @@ def run_analysis_in_thread(
 
     def _target() -> None:
         try:
-            _run(ticker, trade_date, config, tracker)
+            _run(ticker, trade_date, config, tracker, start_date)
         except Exception as exc:
             tracker.mark_error(str(exc))
 
