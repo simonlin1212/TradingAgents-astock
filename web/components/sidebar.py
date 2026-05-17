@@ -58,6 +58,12 @@ def render_sidebar() -> None:
         key="input_date",
     )
 
+    start_date = st.date_input(
+        "数据起始日期",
+        value=date.today().replace(day=1),  # 默认本月第一天
+        key="input_start_date",
+        help="获取历史数据的起始日期，用于技术分析回溯",
+    )
     tracker = st.session_state.get("tracker")
     is_busy = tracker is not None and tracker.is_running
 
@@ -76,6 +82,7 @@ def render_sidebar() -> None:
             st.session_state["start_analysis"] = {
                 "ticker": resolved_code,
                 "trade_date": trade_date.strftime("%Y-%m-%d"),
+                "start_date": start_date.strftime("%Y-%m-%d"),
             }
             st.session_state["viewing_history"] = None
 
