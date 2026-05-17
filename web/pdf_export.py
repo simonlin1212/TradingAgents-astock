@@ -9,8 +9,6 @@ from typing import Any
 
 from fpdf import FPDF
 
-
-_FONT_CANDIDATES = [
 _FONT_CANDIDATES = [
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/msyh.ttf",
