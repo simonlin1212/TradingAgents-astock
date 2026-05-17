@@ -40,12 +40,12 @@ def render_sidebar() -> None:
     st.markdown(
         f"""
         <div style="text-align:center; margin-bottom:1.5rem;">
-            <span style="font-size:2rem; font-weight:800; color:#ff5a1f;">Trading</span><span style="font-size:2rem; font-weight:800; color:{title_color};">Agents</span><span style="font-size:2rem; font-weight:800; color:{title_color};">-</span><span style="font-size:2rem; font-weight:800; color:#ff5a1f;">Astock</span>
+            <span style="font-size:2rem; font-weight:800; text-shadow: 0 0 0 #ff5a1f; -webkit-text-fill-color: #ff5a1f;">Trading</span><span style="font-size:2rem; font-weight:800; text-shadow: 0 0 0 {title_color}; -webkit-text-fill-color: {title_color};">Agents</span>
             <div style="font-size:0.85rem; color:{subtitle_color}; margin-top:0.2rem;">
                 A股多Agent投研系统
             </div>
             <div style="font-size:0.7rem; color:{author_color}; margin-top:0.3rem;">
-                by <a href="https://github.com/simonlin1212" style="color:#ff5a1f; text-decoration:none;">simonlin1212</a>
+                by <a href="https://github.com/simonlin1212" style="text-shadow: 0 0 0 #ff5a1f; -webkit-text-fill-color: #ff5a1f; text-decoration:none;">simonlin1212</a>
             </div>
         </div>
         """,
