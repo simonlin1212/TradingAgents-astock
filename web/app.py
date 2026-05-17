@@ -254,8 +254,7 @@ else:
                 font-weight: 900;
                 margin-bottom: 0.5rem;
             ">
-                <span style="color: #ff5a1f;">Trading</span><span style="color: {text_color};">Agents</span><span style="color: {text_color};">-</span><span style="color: #ff5a1f;">Astock</span>
-            </div>
+ <span style="text-shadow: 0 0 0 #ff5a1f; -webkit-text-fill-color: #ff5a1f;">Trading</span><span style="text-shadow: 0 0 0 {text_color}; -webkit-text-fill-color: {text_color};">Agents</span>          </div>
             <div style="color: {dim_text}; font-size: 1.1rem; max-width: 500px; line-height: 1.6;">
                 A股多Agent投研分析系统<br>
                 7位AI分析师 → 质量门控 → 多空辩论 → 风控评估 → 最终决策
