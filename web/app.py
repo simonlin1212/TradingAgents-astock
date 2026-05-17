@@ -41,9 +41,9 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
 
     /* Hide Streamlit chrome for clean video recording */
-    #MainMenu, header[data-testid="stHeader"],
+    /*#MainMenu, header[data-testid="stHeader"],
     footer, div[data-testid="stDecoration"],
-    div[data-testid="stToolbar"] { display: none !important; }
+    div[data-testid="stToolbar"] { display: none !important; }*/
     /* Ensure sidebar collapse/expand control is always visible */
     button[data-testid="collapsedControl"] { display: flex !important; }
 
