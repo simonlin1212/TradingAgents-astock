@@ -157,9 +157,9 @@ st.markdown(
 
 def _build_config() -> dict:
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = "minimax"
-    config["deep_think_llm"] = "MiniMax-M2.7"
-    config["quick_think_llm"] = "MiniMax-M2.7-highspeed"
+    config["llm_provider"] = "deepseek"
+    config["deep_think_llm"] = "deepseek-chat"
+    config["quick_think_llm"] = "deepseek-chat"
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
         "technical_indicators": "a_stock",
