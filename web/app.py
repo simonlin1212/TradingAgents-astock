@@ -33,109 +33,133 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Theme ────────────────────────────────────────────────────────────────────
+if st.session_state.get("theme_choice", "暗黑模式") == "明亮模式":
+    bg_main = "#f5f5f5"
+    bg_sidebar = "#ffffff"
+    text_color = "#1a1a1a"
+    border_color = "#e0e0e0"
+    input_bg = "#ffffff"
+    secondary_bg = "#f0f0f0"
+    secondary_hover = "#e0e0e0"
+    dim_text = "#666"
+    card_border = "#e0e0e0"
+    metric_label = "#555"
+else:
+    bg_main = "#0a0a0a"
+    bg_sidebar = "#0f0f0f"
+    text_color = "#f5f1eb"
+    border_color = "#1a1a1a"
+    input_bg = "#161616"
+    secondary_bg = "#161616"
+    secondary_hover = "#1e1e1e"
+    dim_text = "#888"
+    card_border = "#222"
+    metric_label = "#888"
+
 # ── Custom CSS ───────────────────────────────────────────────────────────────
 
 st.markdown(
-    """
+    f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
 
-    /* Hide Streamlit chrome for clean video recording */
-    #MainMenu, header[data-testid="stHeader"],
-    footer, div[data-testid="stDecoration"],
-    div[data-testid="stToolbar"] { display: none !important; }
-    /* Ensure sidebar collapse/expand control is always visible */
-    button[data-testid="collapsedControl"] { display: flex !important; }
+    button[data-testid="collapsedControl"] {{ display: flex !important; }}
 
-    html, body, [class*="css"] {
+    html, body, [class*="css"] {{
         font-family: 'Inter', -apple-system, sans-serif;
-    }
-    .stApp {
-        background: #0a0a0a;
-    }
-    section[data-testid="stSidebar"] {
-        background: #0f0f0f;
-        border-right: 1px solid #1a1a1a;
-    }
-    .stMetric label { color: #888 !important; font-size: 0.8rem !important; }
-    .stMetric [data-testid="stMetricValue"] {
+        color: {text_color};
+    }}
+    .stApp {{
+        background: {bg_main};
+    }}
+    section[data-testid="stSidebar"] {{
+        background: {bg_sidebar};
+        border-right: 1px solid {border_color};
+    }}
+    .stMetric label {{ color: {metric_label} !important; font-size: 0.8rem !important; }}
+    .stMetric [data-testid="stMetricValue"] {{
         color: #ff5a1f !important;
         font-weight: 700 !important;
-    }
-    .stProgress > div > div > div {
+    }}
+    .stProgress > div > div > div {{
         background: linear-gradient(90deg, #ff5a1f, #ff8c42) !important;
-    }
-    button[kind="primary"] {
+    }}
+    button[kind="primary"] {{
         background: linear-gradient(135deg, #ff5a1f, #ff8c42) !important;
         border: none !important;
         font-weight: 700 !important;
         letter-spacing: 0.05em !important;
         box-shadow: 0 4px 15px rgba(255,90,31,0.3) !important;
         transition: all 0.2s ease !important;
-    }
-    button[kind="primary"]:hover {
+    }}
+    button[kind="primary"]:hover {{
         background: linear-gradient(135deg, #e04d15, #ff5a1f) !important;
         box-shadow: 0 6px 20px rgba(255,90,31,0.4) !important;
         transform: translateY(-1px) !important;
-    }
-    /* Secondary buttons (history items) */
-    button[kind="secondary"] {
-        background: #161616 !important;
-        border: 1px solid #2a2a2a !important;
-        color: #ccc !important;
+    }}
+    button[kind="secondary"] {{
+        background: {secondary_bg} !important;
+        border: 1px solid {border_color} !important;
+        color: {text_color} !important;
         transition: all 0.2s ease !important;
-    }
-    button[kind="secondary"]:hover {
-        background: #1e1e1e !important;
+    }}
+    button[kind="secondary"]:hover {{
+        background: {secondary_hover} !important;
         border-color: #ff5a1f !important;
         color: #ff5a1f !important;
-    }
-    .stExpander {
-        border: 1px solid #222 !important;
+    }}
+    .stExpander {{
+        border: 1px solid {card_border} !important;
         border-radius: 8px !important;
-    }
-    .stTabs [data-baseweb="tab"] {
-        color: #888 !important;
-    }
-    .stTabs [aria-selected="true"] {
+    }}
+    .stTabs [data-baseweb="tab"] {{ color: {dim_text} !important; }}
+    .stTabs [aria-selected="true"] {{
         color: #ff5a1f !important;
         border-bottom-color: #ff5a1f !important;
-    }
-    div[data-testid="stDownloadButton"] button {
+    }}
+    div[data-testid="stDownloadButton"] button {{
         background: #1a1a2e !important;
         border: 1px solid #ff5a1f !important;
         color: #ff5a1f !important;
-    }
-    /* Text input styling */
+    }}
     input[data-testid="stTextInputRootElement"] input,
-    .stTextInput input {
-        background: #161616 !important;
-        border-color: #2a2a2a !important;
-        color: #f5f1eb !important;
-    }
-    .stTextInput input:focus {
+    .stTextInput input {{
+        background: {input_bg} !important;
+        border-color: {border_color} !important;
+        color: {text_color} !important;
+    }}
+    .stTextInput input:focus {{
         border-color: #ff5a1f !important;
         box-shadow: 0 0 0 1px #ff5a1f !important;
-    }
-    /* Date input styling */
-    .stDateInput input {
-        background: #161616 !important;
-        border-color: #2a2a2a !important;
-        color: #f5f1eb !important;
-    }
+    }}
+    .stDateInput input {{
+        background: {input_bg} !important;
+        border-color: {border_color} !important;
+        color: {text_color} !important;
+    }}
+    /* Labels and captions */
+    .stCaption, .stMarkdown p, .stMarkdown span {{
+        color: {text_color} !important;
+    }}
+    section[data-testid="stSidebar"] input {{
+        color: {text_color} !important;
+    }}
+    section[data-testid="stSidebar"] input::placeholder {{
+        color: {dim_text} !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-
 # ── Build config ─────────────────────────────────────────────────────────────
 
 def _build_config() -> dict:
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = "minimax"
-    config["deep_think_llm"] = "MiniMax-M2.7"
-    config["quick_think_llm"] = "MiniMax-M2.7-highspeed"
+    config["llm_provider"] = "deepseek"
+    config["deep_think_llm"] = "deepseek-chat"
+    config["quick_think_llm"] = "deepseek-chat"
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
         "technical_indicators": "a_stock",
@@ -167,9 +191,10 @@ if start_req:
     run_analysis_in_thread(
         ticker=start_req["ticker"],
         trade_date=start_req["trade_date"],
+        start_date=start_req.get("start_date", start_req["trade_date"]),
         config=_build_config(),
         tracker=tracker,
-    )
+    ) #起始日期
 
 
 # ── Main area state machine ─────────────────────────────────────────────────
@@ -214,7 +239,7 @@ elif tracker and tracker.error:
 # State 0: Idle — welcome screen
 else:
     st.markdown(
-        """
+        f"""
         <div style="
             display: flex;
             flex-direction: column;
@@ -229,18 +254,17 @@ else:
                 font-weight: 900;
                 margin-bottom: 0.5rem;
             ">
-                <span style="color: #ff5a1f;">Trading</span><span style="color: #f5f1eb;">Agents</span><span style="color: #f5f1eb;">-</span><span style="color: #ff5a1f;">Astock</span>
-            </div>
-            <div style="color: #888; font-size: 1.1rem; max-width: 500px; line-height: 1.6;">
+ <span style="text-shadow: 0 0 0 #ff5a1f; -webkit-text-fill-color: #ff5a1f;">Trading</span><span style="text-shadow: 0 0 0 {text_color}; -webkit-text-fill-color: {text_color};">Agents</span>          </div>
+            <div style="color: {dim_text}; font-size: 1.1rem; max-width: 500px; line-height: 1.6;">
                 A股多Agent投研分析系统<br>
                 7位AI分析师 → 质量门控 → 多空辩论 → 风控评估 → 最终决策
             </div>
             <div style="
                 margin-top: 2rem;
                 padding: 1rem 2rem;
-                border: 1px solid #222;
+                border: 1px solid {card_border};
                 border-radius: 12px;
-                color: #666;
+                color: {dim_text};
                 font-size: 0.9rem;
             ">
                 ← 在左侧输入股票代码，开始分析
@@ -248,11 +272,11 @@ else:
             <div style="
                 margin-top: 2.5rem;
                 padding: 0.8rem 1.5rem;
-                color: #555;
+                color: {dim_text};
                 font-size: 0.75rem;
                 max-width: 500px;
                 line-height: 1.6;
-                border-top: 1px solid #1a1a1a;
+                border-top: 1px solid {border_color};
             ">
                 ⚠️ 本项目仅供学习研究与技术演示，不构成任何投资建议。<br>
                 投资决策请咨询持牌专业机构。作者不对使用本工具产生的任何损失承担责任。
