@@ -1,51 +1,43 @@
-"""Generate PDF reports from analysis results using fpdf2."""
+"""Generate PDF reports from analysis results using WeasyPrint.
+
+We render the report as styled HTML and let WeasyPrint do typography
+and pagination. This replaces an earlier fpdf2 implementation that
+either crashed (default word-wrap mode) or hung for minutes
+(``wrapmode="CHAR"``) on real Chinese reports with mixed CJK + ASCII
+content. HTML/CSS handles CJK natively, supports proper tables,
+blockquotes, and code blocks, and renders a 300 KB report in seconds.
+"""
 
 from __future__ import annotations
 
+import html
 import re
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-from fpdf import FPDF
-
-
-_FONT_CANDIDATES = [
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/STHeiti Light.ttc",
-    "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
-    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-]
-
-
-def _find_cjk_font() -> str | None:
-    for path in _FONT_CANDIDATES:
-        if Path(path).exists():
-            return path
-    return None
+import markdown as md_lib
+from weasyprint import CSS, HTML
 
 
 def _strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
 
 
-def _strip_md_inline(text: str) -> str:
-    """Remove inline markdown formatting: **bold**, *italic*, `code`, [link](url)."""
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.+?)\*", r"\1", text)
-    text = re.sub(r"`(.+?)`", r"\1", text)
-    text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
-    return text
-
-
-def _signal_color(signal: str) -> tuple[int, int, int]:
-    s = signal.upper()
+def _signal_color(signal: str) -> str:
+    s = (signal or "").upper()
     if "BUY" in s:
-        return (34, 197, 94)
+        return "#22c55e"
     if "SELL" in s:
-        return (239, 68, 68)
-    return (251, 191, 36)
+        return "#ef4444"
+    return "#fbbf24"
+
+
+def _signal_cn(signal: str) -> str:
+    s = (signal or "").upper()
+    if "BUY" in s:
+        return "买入"
+    if "SELL" in s:
+        return "卖出"
+    return "持有"
 
 
 _REPORT_SECTIONS = [
@@ -59,237 +51,270 @@ _REPORT_SECTIONS = [
 ]
 
 
-class _ReportPDF(FPDF):
-    def __init__(self, ticker: str, trade_date: str, signal: str) -> None:
-        super().__init__()
-        self.ticker = ticker
-        self.trade_date = trade_date
-        self.signal = signal
-        self._has_cjk = False
-
-        font_path = _find_cjk_font()
-        if font_path:
-            self.add_font("CJK", "", font_path, uni=True)
-            self.add_font("CJK", "B", font_path, uni=True)
-            self._has_cjk = True
-
-    def _use_font(self, style: str = "", size: int = 10) -> None:
-        if self._has_cjk:
-            self.set_font("CJK", style, size)
-        else:
-            self.set_font("Helvetica", style, size)
-
-    def header(self) -> None:
-        self._use_font("", 8)
-        self.set_text_color(150, 150, 150)
-        self.cell(0, 6, f"A股多Agent投研分析  |  {self.ticker}  |  {self.trade_date}", align="C")
-        self.ln(8)
-        self.set_draw_color(60, 60, 60)
-        self.line(10, self.get_y(), self.w - 10, self.get_y())
-        self.ln(4)
-
-    def footer(self) -> None:
-        self.set_y(-15)
-        self._use_font("", 8)
-        self.set_text_color(120, 120, 120)
-        self.cell(0, 5, f"Page {self.page_no()}/{{nb}}", align="C")
-        self.ln(4)
-        self._use_font("", 6)
-        self.set_text_color(160, 160, 160)
-        self.cell(0, 4, "仅供学习研究，不构成投资建议", align="C")
-
-    def add_cover(self) -> None:
-        self.add_page()
-        self.ln(60)
-
-        self._use_font("B", 24)
-        self.set_text_color(255, 90, 31)
-        self.cell(0, 12, "A股多Agent投研分析报告", align="C")
-        self.ln(20)
-
-        self._use_font("B", 36)
-        self.set_text_color(30, 30, 30)
-        self.cell(0, 18, self.ticker, align="C")
-        self.ln(16)
-
-        self._use_font("", 14)
-        self.set_text_color(100, 100, 100)
-        self.cell(0, 10, f"分析日期: {self.trade_date}", align="C")
-        self.ln(8)
-        self.cell(0, 10, f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}", align="C")
-        self.ln(20)
-
-        r, g, b = _signal_color(self.signal)
-        self._use_font("B", 40)
-        self.set_text_color(r, g, b)
-        self.cell(0, 20, self.signal.upper(), align="C")
-        self.ln(20)
-
-        self._use_font("", 9)
-        self.set_text_color(120, 120, 120)
-        self.multi_cell(
-            0, 5,
-            "免责声明: 本报告由 AI 多 Agent 系统自动生成, 仅供学习研究与技术演示, "
-            "不构成任何投资建议。投资决策请咨询持牌专业机构。"
-            "使用本报告所产生的任何损失由使用者自行承担。",
-            align="C",
-        )
-
-    def add_section(self, title: str, content: str) -> None:
-        self.add_page()
-        self._use_font("B", 16)
-        self.set_text_color(255, 90, 31)
-        self.cell(0, 10, title)
-        self.ln(12)
-
-        cleaned = _strip_think(content)
-        self._render_markdown(cleaned)
-
-    def _render_markdown(self, text: str) -> None:
-        """Render markdown-formatted text with basic styling."""
-        lines = text.split("\n")
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-
-            # Empty line → small vertical gap
-            if not stripped:
-                self.ln(3)
-                i += 1
-                continue
-
-            # Headings: ### → 11pt, ## → 13pt, # → 14pt
-            if stripped.startswith("###"):
-                self._use_font("B", 11)
-                self.set_text_color(50, 50, 50)
-                self.cell(0, 7, stripped.lstrip("#").strip())
-                self.ln(8)
-                i += 1
-                continue
-            if stripped.startswith("##"):
-                self._use_font("B", 13)
-                self.set_text_color(40, 40, 40)
-                self.cell(0, 8, stripped.lstrip("#").strip())
-                self.ln(9)
-                i += 1
-                continue
-            if stripped.startswith("#"):
-                self._use_font("B", 14)
-                self.set_text_color(255, 90, 31)
-                self.cell(0, 9, stripped.lstrip("#").strip())
-                self.ln(10)
-                i += 1
-                continue
-
-            # Horizontal rule
-            if stripped in ("---", "***", "___"):
-                self.set_draw_color(180, 180, 180)
-                y = self.get_y() + 2
-                self.line(10, y, self.w - 10, y)
-                self.ln(6)
-                i += 1
-                continue
-
-            # Bullet points (-, *, numbered)
-            if re.match(r"^[-*]\s", stripped) or re.match(r"^\d+[.)]\s", stripped):
-                self._use_font("", 10)
-                self.set_text_color(40, 40, 40)
-                if re.match(r"^[-*]\s", stripped):
-                    bullet = "  •  "
-                    body = stripped[2:].strip()
-                else:
-                    m = re.match(r"^(\d+[.)])\s*(.*)", stripped)
-                    bullet = f"  {m.group(1)} "
-                    body = m.group(2)
-                body = _strip_md_inline(body)
-                self.multi_cell(0, 5.5, bullet + body)
-                i += 1
-                continue
-
-            # Table rows (|col|col|) → render as plain text with spacing
-            if stripped.startswith("|") and stripped.endswith("|"):
-                # Skip separator rows like |---|---|
-                if re.match(r"^\|[-:\s|]+\|$", stripped):
-                    i += 1
-                    continue
-                self._use_font("", 9)
-                self.set_text_color(60, 60, 60)
-                cells = [c.strip() for c in stripped.strip("|").split("|")]
-                row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.multi_cell(0, 5, row_text)
-                i += 1
-                continue
-
-            # Regular paragraph — collect consecutive non-special lines
-            para_lines = []
-            while i < len(lines):
-                ln = lines[i].strip()
-                if not ln or ln.startswith("#") or ln.startswith("|") or re.match(r"^[-*]\s", ln) or re.match(r"^\d+[.)]\s", ln) or ln in ("---", "***", "___"):
-                    break
-                para_lines.append(ln)
-                i += 1
-
-            if para_lines:
-                self._use_font("", 10)
-                self.set_text_color(40, 40, 40)
-                para = " ".join(para_lines)
-                para = _strip_md_inline(para)
-                self.multi_cell(0, 5.5, para)
-                self.ln(2)
-                continue
-
-            i += 1
+# Markdown → HTML with tables, fenced code, attr lists, sane breaks.
+_MD = md_lib.Markdown(
+    extensions=["tables", "fenced_code", "sane_lists", "nl2br"],
+    output_format="html5",
+)
 
 
-def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> bytes:
-    """Generate a PDF report and return it as bytes."""
-    pdf = _ReportPDF(ticker, trade_date, signal)
-    pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=20)
+def _md_to_html(text: str) -> str:
+    """Convert one markdown string to an HTML fragment."""
+    _MD.reset()
+    return _MD.convert(_strip_think(text))
 
-    pdf.add_cover()
 
-    for key, title in _REPORT_SECTIONS:
-        content = final_state.get(key, "")
-        if content:
-            pdf.add_section(title, str(content))
+def _section_html(title: str, content: str) -> str:
+    body = _md_to_html(content)
+    return f'<section class="report"><h1>{html.escape(title)}</h1>{body}</section>'
 
-    debate = final_state.get("investment_debate_state")
-    if debate and isinstance(debate, dict):
-        parts = []
-        if debate.get("bull_history"):
-            parts.append(f"=== 多方论点 ===\n{debate['bull_history']}")
-        if debate.get("bear_history"):
-            parts.append(f"\n=== 空方论点 ===\n{debate['bear_history']}")
-        if debate.get("judge_decision"):
-            parts.append(f"\n=== 研究经理决策 ===\n{debate['judge_decision']}")
-        if parts:
-            pdf.add_section("多空辩论", "\n".join(parts))
 
-    trader_decision = final_state.get("trader_investment_decision", "")
-    if trader_decision:
-        pdf.add_section("交易员决策", _strip_think(str(trader_decision)))
+def _build_html(
+    final_state: dict[str, Any], ticker: str, trade_date: str, signal: str
+) -> str:
+    color = _signal_color(signal)
+    cn = _signal_cn(signal)
+    sig = html.escape(signal.upper() if signal else cn)
+
+    cover = f"""
+    <section class="cover">
+        <div class="cover-tag">TRADING SIGNAL</div>
+        <div class="cover-signal" style="color: {color};">{sig}</div>
+        <div class="cover-meta">{html.escape(ticker)} · {html.escape(trade_date)}</div>
+        <div class="cover-cn">{cn}</div>
+        <div class="cover-disclaimer">
+            ⚠️ 本报告由 AI 自动生成，仅供学习研究<br>
+            不构成投资建议，使用本报告所产生的任何损失由使用者自行承担
+        </div>
+    </section>
+    """
+
+    body_parts: list[str] = [cover]
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        pdf.add_section("最终投资建议", _strip_think(str(inv_plan)))
+        body_parts.append(_section_html("👔 投资建议（研究经理）", str(inv_plan)))
+
+    for key, title in _REPORT_SECTIONS:
+        c = final_state.get(key, "")
+        if c:
+            body_parts.append(_section_html(title, str(c)))
+
+    debate = final_state.get("investment_debate_state")
+    if isinstance(debate, dict):
+        parts = []
+        if debate.get("bull_history"):
+            parts.append("## 多方论点\n\n" + str(debate["bull_history"]))
+        if debate.get("bear_history"):
+            parts.append("## 空方论点\n\n" + str(debate["bear_history"]))
+        if debate.get("judge_decision"):
+            parts.append("## 研究经理判定\n\n" + str(debate["judge_decision"]))
+        if parts:
+            body_parts.append(_section_html("⚔️ 多空辩论", "\n\n".join(parts)))
+
+    trader = final_state.get("trader_investment_decision", "")
+    if trader:
+        body_parts.append(_section_html("💹 交易员决策", str(trader)))
 
     risk = final_state.get("risk_debate_state")
-    if risk and isinstance(risk, dict):
+    if isinstance(risk, dict):
         parts = []
-        for key_name, label in [("aggressive_history", "激进观点"),
-                                 ("conservative_history", "保守观点"),
-                                 ("neutral_history", "中性观点")]:
-            if risk.get(key_name):
-                parts.append(f"=== {label} ===\n{risk[key_name]}")
+        if risk.get("aggressive_history"):
+            parts.append("## 激进风险分析师\n\n" + str(risk["aggressive_history"]))
+        if risk.get("conservative_history"):
+            parts.append("## 保守风险分析师\n\n" + str(risk["conservative_history"]))
+        if risk.get("neutral_history"):
+            parts.append("## 中性风险分析师\n\n" + str(risk["neutral_history"]))
         if risk.get("judge_decision"):
-            parts.append(f"\n=== 风控决策 ===\n{risk['judge_decision']}")
+            parts.append("## 风控经理判定\n\n" + str(risk["judge_decision"]))
         if parts:
-            pdf.add_section("风控评估", "\n".join(parts))
+            body_parts.append(_section_html("🛡️ 风控辩论", "\n\n".join(parts)))
 
-    final_decision = final_state.get("final_trade_decision", "")
-    if final_decision:
-        pdf.add_section("最终决策", _strip_think(str(final_decision)))
+    dqs = final_state.get("data_quality_summary", "")
+    if dqs:
+        body_parts.append(_section_html("✅ 数据质量", str(dqs)))
 
-    return bytes(pdf.output())
+    final_dec = final_state.get("final_trade_decision", "")
+    if final_dec:
+        body_parts.append(_section_html("🎯 最终决策", str(final_dec)))
+
+    body = "\n".join(body_parts)
+
+    header_text = f"A股多Agent投研分析  ·  {html.escape(ticker)}  ·  {html.escape(trade_date)}"
+
+    return f"""<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>TradingAgents-Astock Report {html.escape(ticker)} {html.escape(trade_date)}</title>
+</head>
+<body>
+<div class="page-header">{header_text}</div>
+{body}
+</body>
+</html>"""
+
+
+_CSS = """
+@page {
+    size: A4;
+    margin: 16mm 14mm 18mm 14mm;
+    @top-center {
+        content: string(running-header);
+        font-family: "PingFang SC", "Heiti SC", "Noto Sans CJK SC", sans-serif;
+        font-size: 9pt;
+        color: #999;
+        border-bottom: 0.5pt solid #ddd;
+        padding-bottom: 4mm;
+    }
+    @bottom-left {
+        content: "仅供学习研究，不构成投资建议";
+        font-family: "PingFang SC", "Heiti SC", "Noto Sans CJK SC", sans-serif;
+        font-size: 7.5pt;
+        color: #bbb;
+    }
+    @bottom-right {
+        content: "Page " counter(page) " / " counter(pages);
+        font-family: "PingFang SC", "Heiti SC", "Noto Sans CJK SC", sans-serif;
+        font-size: 8.5pt;
+        color: #aaa;
+    }
+}
+@page cover {
+    margin: 0;
+    @top-center { content: none; }
+    @bottom-left { content: none; }
+    @bottom-right { content: none; }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    font-family: "PingFang SC", "Heiti SC", "Noto Sans CJK SC", sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    color: #2a2a2a;
+    margin: 0;
+    padding: 0;
+}
+
+.page-header { string-set: running-header content(); display: none; }
+
+.cover {
+    page: cover;
+    page-break-after: always;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    color: #f5f1eb;
+    text-align: center;
+    padding: 70mm 20mm 20mm 20mm;
+    min-height: 297mm;
+}
+.cover-tag { font-size: 11pt; letter-spacing: 4pt; color: #888; }
+.cover-signal {
+    font-size: 64pt;
+    font-weight: 900;
+    line-height: 1;
+    margin: 8mm 0 4mm;
+    letter-spacing: 2pt;
+}
+.cover-meta { font-size: 16pt; color: #f5f1eb; margin-bottom: 2mm; }
+.cover-cn { font-size: 14pt; color: #b8b3a8; margin-bottom: 30mm; }
+.cover-disclaimer {
+    margin-top: 60mm;
+    font-size: 9pt;
+    color: #888;
+    line-height: 1.8;
+}
+
+section.report { page-break-before: always; }
+section.report > h1 {
+    font-size: 18pt;
+    font-weight: 800;
+    color: #ff5a1f;
+    margin: 0 0 6mm 0;
+    padding-bottom: 3mm;
+    border-bottom: 1.5pt solid #ff5a1f;
+}
+
+h2 {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 6mm 0 2mm 0;
+    padding-bottom: 1.5mm;
+    border-bottom: 0.5pt solid #ddd;
+}
+h3 {
+    font-size: 11.5pt;
+    font-weight: 700;
+    color: #333;
+    margin: 4mm 0 1.5mm 0;
+}
+h4, h5, h6 { font-size: 10.5pt; font-weight: 700; color: #444; margin: 3mm 0 1mm 0; }
+
+p { margin: 1.5mm 0; orphans: 3; widows: 3; }
+
+strong { color: #1a1a1a; }
+em { color: #555; }
+
+ul, ol { margin: 2mm 0 2mm 0; padding-left: 7mm; }
+li { margin: 0.6mm 0; }
+
+blockquote {
+    border-left: 2pt solid #ff5a1f;
+    background: #fff7f2;
+    padding: 2mm 4mm;
+    margin: 2mm 0;
+    color: #444;
+    font-size: 10pt;
+}
+
+code {
+    font-family: "SF Mono", "Menlo", "Courier New", monospace;
+    background: #f4f4f4;
+    padding: 0.5mm 1.5mm;
+    border-radius: 1mm;
+    font-size: 9.5pt;
+}
+pre {
+    background: #f7f7f7;
+    border: 0.5pt solid #e0e0e0;
+    padding: 3mm;
+    border-radius: 1.5mm;
+    font-size: 9pt;
+    line-height: 1.45;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+}
+pre code { background: transparent; padding: 0; }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 3mm 0;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+}
+th, td {
+    border: 0.5pt solid #ccc;
+    padding: 1.5mm 2.5mm;
+    text-align: left;
+    vertical-align: top;
+}
+th {
+    background: #fafafa;
+    font-weight: 700;
+    color: #1a1a1a;
+}
+tr:nth-child(even) td { background: #fcfcfc; }
+
+hr { border: none; border-top: 0.5pt solid #ddd; margin: 4mm 0; }
+"""
+
+
+def generate_pdf(
+    final_state: dict[str, Any], ticker: str, trade_date: str, signal: str
+) -> bytes:
+    """Generate a PDF report and return it as bytes."""
+    html_str = _build_html(final_state, ticker, trade_date, signal)
+    return HTML(string=html_str).write_pdf(stylesheets=[CSS(string=_CSS)])
