@@ -199,7 +199,7 @@ class _ReportPDF(FPDF):
                     bullet = f"  {m.group(1)} "
                     body = m.group(2)
                 body = _strip_md_inline(body)
-                self.multi_cell(0, 5.5, bullet + body)
+                self.multi_cell(0, 5.5, bullet + body, wrapmode="CHAR")
                 i += 1
                 continue
 
@@ -213,7 +213,7 @@ class _ReportPDF(FPDF):
                 self.set_text_color(60, 60, 60)
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
                 row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.multi_cell(0, 5, row_text)
+                self.multi_cell(0, 5, row_text, wrapmode="CHAR")
                 i += 1
                 continue
 
@@ -231,7 +231,7 @@ class _ReportPDF(FPDF):
                 self.set_text_color(40, 40, 40)
                 para = " ".join(para_lines)
                 para = _strip_md_inline(para)
-                self.multi_cell(0, 5.5, para)
+                self.multi_cell(0, 5.5, para, wrapmode="CHAR")
                 self.ln(2)
                 continue
 

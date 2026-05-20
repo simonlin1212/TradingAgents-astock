@@ -77,14 +77,32 @@ def render_report(
 
     col_pdf, col_spacer = st.columns([1, 3])
     with col_pdf:
-        pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
-        st.download_button(
-            "📥 下载 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        # Generate PDF lazily on user click and cache in session_state.
+        # Previously the PDF was generated on every script rerun, which:
+        #   (1) wasted multi-second CPU on each Streamlit interaction, and
+        #   (2) on render failure raised an exception that propagated out
+        #       of render_report, blowing away the entire result page so
+        #       the user lost all analyst output along with the PDF.
+        # Wrapping in try/except keeps the rest of the report visible
+        # when fpdf2 hits an edge case (e.g. CJK content that can't wrap).
+        pdf_key = f"_pdf_bytes_{ticker}_{trade_date}"
+        if pdf_key not in st.session_state:
+            if st.button("📥 生成 PDF 报告", use_container_width=True):
+                try:
+                    st.session_state[pdf_key] = generate_pdf(
+                        final_state, ticker, trade_date, signal
+                    )
+                except Exception as exc:
+                    st.error(f"PDF 生成失败：{exc}（页面内容未受影响）")
+                    st.session_state[pdf_key] = None
+        if st.session_state.get(pdf_key):
+            st.download_button(
+                "📥 下载 PDF 报告",
+                data=st.session_state[pdf_key],
+                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     st.markdown("---")
 
