@@ -1,0 +1,57 @@
+# TradingAgents-Astock Model Profile
+# ===================================
+# Quick-switch configuration: edit the active_profile key below,
+# then restart the app. All model choices are centralized here.
+#
+# Usage in Python:
+#   from tradingagents.model_profile import get_active_config
+#   config = get_active_config()
+#   ta = TradingAgentsGraph(config=config)
+#
+# Usage in Web UI:
+#   The sidebar always takes precedence. This file sets the defaults.
+
+active_profile: "owl_alpha"
+
+profiles:
+  # Profile 1: OWL Alpha via OpenRouter (default)
+  owl_alpha:
+    description: "OWL Alpha (Nous Hermes 4) via OpenRouter - balanced speed/quality"
+    llm_provider: "openrouter"
+    quick_think_llm: "openrouter/owl-alpha"
+    deep_think_llm: "openrouter/owl-alpha"
+
+  # Profile 2: DeepSeek V4 Flash via OpenRouter (fast, cheap)
+  deepseek_fast:
+    description: "DeepSeek V4 Flash via OpenRouter - fast and cost-effective"
+    llm_provider: "openrouter"
+    quick_think_llm: "deepseek/deepseek-v4-flash"
+    deep_think_llm: "deepseek/deepseek-v4-flash"
+
+  # Profile 3: DeepSeek V4 Pro via OpenRouter (best reasoning)
+  deepseek_pro:
+    description: "DeepSeek V4 Pro via OpenRouter - maximum reasoning quality"
+    llm_provider: "openrouter"
+    quick_think_llm: "deepseek/deepseek-v4-flash"
+    deep_think_llm: "deepseek/deepseek-v4-pro"
+
+  # Profile 4: MiniMax M2.7 (Chinese optimized)
+  minimax:
+    description: "MiniMax M2.7 - optimized for Chinese financial analysis"
+    llm_provider: "minimax"
+    quick_think_llm: "MiniMax-M2.7-highspeed"
+    deep_think_llm: "MiniMax-M2.7"
+
+  # Profile 5: DeepSeek native (direct API, not via OpenRouter)
+  deepseek_native:
+    description: "DeepSeek direct API - requires DEEPSEEK_API_KEY"
+    llm_provider: "deepseek"
+    quick_think_llm: "deepseek-chat"
+    deep_think_llm: "deepseek-chat"
+
+# Common settings shared across all profiles
+shared_settings:
+  output_language: "Chinese"
+  max_debate_rounds: 1
+  max_risk_discuss_rounds: 1
+  checkpoint_enabled: false

@@ -1,4 +1,5 @@
 import os
+import threading
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
@@ -6,6 +7,41 @@ from langchain_openai import ChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+
+
+class CredentialPool:
+    """Thread-safe round-robin credential pool for providers with multiple API keys.
+
+    Reads additional keys from environment variables named ``<BASE>_2``,
+    ``<BASE>_3``, etc.  Falls back to a single key if no pool is configured.
+    """
+
+    _lock = threading.Lock()
+    _index: int = 0
+
+    @classmethod
+    def get_key(cls, base_env: str) -> Optional[str]:
+        """Return the next API key in round-robin order.
+
+        Collects keys from ``<BASE>``, ``<BASE>_2``, ``<BASE>_3``, ... up to
+        ``<BASE>_10``.  Returns ``None`` if no key is found.
+        """
+        keys: list[str] = []
+        for suffix in ["", "_2", "_3", "_4", "_5", "_6", "_7", "_8", "_9", "_10"]:
+            env_name = f"{base_env}{suffix}"
+            val = os.environ.get(env_name)
+            if val:
+                keys.append(val)
+
+        if not keys:
+            return None
+        if len(keys) == 1:
+            return keys[0]
+
+        with cls._lock:
+            key = keys[cls._index % len(keys)]
+            cls._index += 1
+        return key
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -152,7 +188,7 @@ class OpenAIClient(BaseLLMClient):
             default_base, api_key_env = _PROVIDER_CONFIG[self.provider]
             llm_kwargs["base_url"] = self.base_url or default_base
             if api_key_env:
-                api_key = os.environ.get(api_key_env)
+                api_key = CredentialPool.get_key(api_key_env)
                 if api_key:
                     llm_kwargs["api_key"] = api_key
             else:

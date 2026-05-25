@@ -11,6 +11,7 @@ from web.history import get_history
 
 # Provider display names in recommended order
 _PROVIDERS: list[tuple[str, str]] = [
+    ("OpenRouter（推荐·统一API）", "openrouter"),
     ("MiniMax（推荐·国内直连）", "minimax"),
     ("DeepSeek", "deepseek"),
     ("通义千问 Qwen", "qwen"),
