@@ -77,14 +77,25 @@ def render_report(
 
     col_pdf, col_spacer = st.columns([1, 3])
     with col_pdf:
-        pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
-        st.download_button(
-            "📥 下载 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        pdf_key = f"_pdf_bytes_{ticker}_{trade_date}"
+        if pdf_key not in st.session_state:
+            if st.button("📥 生成 PDF 报告", use_container_width=True):
+                with st.spinner("生成 PDF 中…"):
+                    try:
+                        st.session_state[pdf_key] = generate_pdf(
+                            final_state, ticker, trade_date, signal
+                        )
+                    except Exception as exc:
+                        st.error(f"PDF 生成失败：{exc}（页面内容未受影响）")
+                        st.session_state[pdf_key] = None
+        if st.session_state.get(pdf_key):
+            st.download_button(
+                "📥 下载 PDF 报告",
+                data=st.session_state[pdf_key],
+                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     st.markdown("---")
 

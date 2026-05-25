@@ -34,7 +34,8 @@ dependencies = [
     "typing-extensions>=4.14.0",
     "yfinance>=0.2.63",
     "streamlit>=1.45.0",
-    "fpdf2>=2.8.0",
+    "weasyprint>=68.0",
+    "markdown>=3.10",
     "python-dotenv>=1.1.0",
     "mootdx>=0.10.0",
 ]
