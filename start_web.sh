@@ -46,5 +46,20 @@ echo "🚀 启动 TradingAgents Web UI..."
 echo "   访问地址: http://localhost:8501"
 echo ""
 
-# 启动 Streamlit Web UI
-streamlit run web/app.py --server.port 8501 --server.headless true
+# 启动 Streamlit Web UI（后台运行，不阻塞浏览器打开）
+streamlit run web/app.py --server.port 8501 --server.headless true &
+STREAMLIT_PID=$!
+
+# 等待 Streamlit 就绪后自动打开浏览器
+echo "⏳ 等待 Streamlit 启动..."
+for i in $(seq 1 30); do
+    if curl -s http://localhost:8501 > /dev/null 2>&1; then
+        echo "✅ Streamlit 已启动，正在打开浏览器..."
+        open http://localhost:8501
+        break
+    fi
+    sleep 1
+done
+
+# 等待 Streamlit 进程结束（保持 Terminal 窗口打开）
+wait $STREAMLIT_PID
