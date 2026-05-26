@@ -92,7 +92,11 @@ class _ReportPDF(FPDF):
         self.set_y(-15)
         self._use_font("", 8)
         self.set_text_color(120, 120, 120)
-        self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
+        self.cell(0, 5, f"Page {self.page_no()}/{{nb}}", align="C")
+        self.ln(4)
+        self._use_font("", 6)
+        self.set_text_color(160, 160, 160)
+        self.cell(0, 4, "仅供学习研究，不构成投资建议", align="C")
 
     def add_cover(self) -> None:
         self.add_page()

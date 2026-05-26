@@ -42,7 +42,7 @@ def create_fundamentals_analyst(llm):
             "\n- `get_cashflow`：现金流量表详细数据"
             "\n- `get_income_statement`：利润表详细数据"
             "\n- `get_industry_comparison(ticker, curr_date)`：获取全行业横向对比（90个行业涨跌幅/成交额/净流入排名，用于估值对标和行业定位）"
-            "\n\n撰写详尽的基本面研究报告，给出具体数据支撑的投资建议。报告末尾附 Markdown 表格汇总关键财务指标和估值水平。"
+            "\n\n撰写详尽的基本面研究报告，给出具体数据支撑的分析结论（仅供研究参考，不构成投资建议）。报告末尾附 Markdown 表格汇总关键财务指标和估值水平。"
             "\n\n📋 必采清单 — 以下数据点必须出现在报告中，无法获取时标注 [数据缺失: xxx]："
             "\n1. PE（TTM）、PB、总市值"
             "\n2. 营收同比增长率"
