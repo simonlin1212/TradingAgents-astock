@@ -74,16 +74,27 @@ _code_to_name: dict[str, str] | None = None
 
 
 def _build_name_code_map() -> tuple[dict[str, str], dict[str, str]]:
-    """Build name→code and code→name maps via mootdx (both SH & SZ markets)."""
+    """Build name→code and code→name maps via mootdx (both SH & SZ markets).
+
+    Returns empty maps if mootdx server is unavailable, so that
+    resolve_ticker can still handle 6-digit code inputs.
+    """
     global _name_to_code, _code_to_name
     if _name_to_code is not None:
         return _name_to_code, _code_to_name
 
     from mootdx.quotes import Quotes
 
-    client = Quotes.factory(market="std")
     n2c: dict[str, str] = {}
     c2n: dict[str, str] = {}
+
+    try:
+        client = Quotes.factory(market="std")
+    except Exception as exc:
+        logger.warning("mootdx Quotes factory unavailable (%s), name lookup disabled", exc)
+        _name_to_code = n2c
+        _code_to_name = c2n
+        return _name_to_code, _code_to_name
 
     for market in (0, 1):  # 0=SZ, 1=SH
         stocks = client.stocks(market=market)
@@ -121,7 +132,16 @@ def resolve_ticker(user_input: str) -> str:
         return _normalize_ticker(s)
 
     clean = s.replace(" ", "").replace("　", "")
-    n2c, _ = _build_name_code_map()
+    try:
+        n2c, _ = _build_name_code_map()
+    except Exception:
+        n2c = {}
+
+    if not n2c:
+        raise ValueError(
+            f"股票名称解析服务暂时不可用（mootdx 服务器未配置），"
+            f"请输入 6 位股票代码（如 002185）"
+        )
 
     if clean in n2c:
         return n2c[clean]
