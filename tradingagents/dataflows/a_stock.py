@@ -735,7 +735,7 @@ def _sina_stock_code(code: str) -> str:
 def _get_financial_report_sina(
     code: str, report_type: str, freq: str, curr_date: str = None,
 ) -> pd.DataFrame:
-    """Shared helper: fetch financial report via Sina direct HTTP API.
+    """Fetch financial report via Sina direct HTTP API.
 
     report_type: '资产负债表' | '利润表' | '现金流量表'
     """
@@ -748,11 +748,13 @@ def _get_financial_report_sina(
 
     prefix = "sh" if code.startswith("6") else "sz"
     paper_code = f"{prefix}{code}"
+
+    # type=1 returns structured report_list with actual financial data
     url = "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
     params = {
         "paperCode": paper_code,
         "source": source_type,
-        "type": "0",
+        "type": "1",
         "page": "1",
         "num": "20",
     }
@@ -760,24 +762,66 @@ def _get_financial_report_sina(
     d = r.json()
 
     result = d.get("result", {}).get("data", {})
-    items = result.get(source_type, [])
-    if not isinstance(items, list) or not items:
+    report_list = result.get("report_list", {})
+
+    # Collect all dates available for this report type
+    if not report_list:
         return pd.DataFrame()
 
-    df = pd.DataFrame(items)
+    # Get available report dates
+    available_dates = list(report_list.keys())
+    if not available_dates:
+        return pd.DataFrame()
 
-    # Filter by curr_date
-    if curr_date and "报告日" in df.columns:
-        df["报告日"] = pd.to_datetime(df["报告日"], errors="coerce")
+    # Filter dates by frequency
+    filtered_dates = []
+    for date_val in available_dates:
+        if freq.lower() == "annual":
+            # Annual = date ends in 1231
+            if date_val.endswith("1231"):
+                filtered_dates.append(date_val)
+        else:
+            # Quarterly = all dates
+            filtered_dates.append(date_val)
+
+    # Filter by curr_date (most recent N reports)
+    if curr_date:
         cutoff = pd.to_datetime(curr_date)
-        df = df[df["报告日"] <= cutoff]
+        filtered_dates = [d for d in filtered_dates if pd.to_datetime(d) <= cutoff]
 
-    # Filter by frequency (annual = month 12 reports only)
-    if freq.lower() == "annual" and "报告日" in df.columns:
-        months = pd.to_datetime(df["报告日"], errors="coerce").dt.month
-        df = df[months == 12]
+    # Sort descending (most recent first), take up to 8
+    filtered_dates.sort(reverse=True)
+    filtered_dates = filtered_dates[:8]
 
-    return df.head(8)
+    if not filtered_dates:
+        return pd.DataFrame()
+
+    # Build flattened DataFrame: each row = one report date
+    rows = []
+    for date_val in filtered_dates:
+        report_data = report_list.get(date_val, {})
+        report_date_desc = next(
+            (rd["date_description"] for rd in result.get("report_date", [])
+             if rd["date_value"] == date_val),
+            date_val,
+        )
+        for item in report_data.get("data", []):
+            rows.append({
+                "报告日": date_val,
+                "报告描述": report_date_desc,
+                "指标名称": item.get("item_title", ""),
+                "指标字段": item.get("item_field", ""),
+                "数值": item.get("item_value"),
+                "同比": item.get("item_tongbi"),
+                "类别": item.get("item_display", ""),
+                "分组": item.get("item_group_no", 0),
+            })
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    return df
 
 
 def get_balance_sheet(

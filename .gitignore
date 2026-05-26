@@ -82,6 +82,18 @@ target/
 profile_default/
 ipython_config.py
 
+# Reports 
+reports/
+
+# User Data
+userdata/
+
+# Others
+.vscode/
+.claude/
+.qwen/
+.venv/
+
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:
