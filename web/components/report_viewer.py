@@ -77,21 +77,27 @@ def render_report(
 
     col_pdf, col_spacer = st.columns([1, 3])
     with col_pdf:
-        pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
-        st.download_button(
-            "📥 下载 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        try:
+            pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
+            st.download_button(
+                "📥 下载 PDF 报告",
+                data=pdf_bytes,
+                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.warning(f"PDF 生成失败（不影响报告查看）: {type(e).__name__}")
 
     st.markdown("---")
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
         st.markdown("### 👔 最终投资建议")
-        st.markdown(_strip_think(str(inv_plan)))
+        try:
+            st.markdown(_strip_think(str(inv_plan)))
+        except Exception as e:
+            st.error(f"❌ 最终投资建议渲染失败: {e}")
         st.markdown("---")
 
     st.markdown("### 📊 分析师报告")
@@ -101,38 +107,68 @@ def render_report(
         if not content:
             continue
         with st.expander(title, expanded=False):
-            st.markdown(_strip_think(str(content)))
+            try:
+                st.markdown(_strip_think(str(content)))
+            except Exception as e:
+                st.error(f"❌ {title}渲染失败: {e}")
 
     debate = final_state.get("investment_debate_state")
     if debate and isinstance(debate, dict):
         st.markdown("### ⚔️ 多空辩论")
         tab_bull, tab_bear, tab_judge = st.tabs(["多方", "空方", "研究经理"])
         with tab_bull:
-            st.markdown(_strip_think(debate.get("bull_history", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(debate.get("bull_history", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 多方辩论渲染失败: {e}")
         with tab_bear:
-            st.markdown(_strip_think(debate.get("bear_history", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(debate.get("bear_history", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 空方辩论渲染失败: {e}")
         with tab_judge:
-            st.markdown(_strip_think(debate.get("judge_decision", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(debate.get("judge_decision", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 研究经理决策渲染失败: {e}")
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
         with st.expander("💹 交易员决策", expanded=False):
-            st.markdown(_strip_think(str(trader_decision)))
+            try:
+                st.markdown(_strip_think(str(trader_decision)))
+            except Exception as e:
+                st.error(f"❌ 交易员决策渲染失败: {e}")
 
     risk = final_state.get("risk_debate_state")
     if risk and isinstance(risk, dict):
         st.markdown("### 🛡️ 风控评估")
         tab_agg, tab_con, tab_neu, tab_rj = st.tabs(["激进", "保守", "中性", "风控决策"])
         with tab_agg:
-            st.markdown(_strip_think(risk.get("aggressive_history", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(risk.get("aggressive_history", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 激进观点渲染失败: {e}")
         with tab_con:
-            st.markdown(_strip_think(risk.get("conservative_history", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(risk.get("conservative_history", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 保守观点渲染失败: {e}")
         with tab_neu:
-            st.markdown(_strip_think(risk.get("neutral_history", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(risk.get("neutral_history", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 中性观点渲染失败: {e}")
         with tab_rj:
-            st.markdown(_strip_think(risk.get("judge_decision", "") or "无数据"))
+            try:
+                st.markdown(_strip_think(risk.get("judge_decision", "") or "无数据"))
+            except Exception as e:
+                st.error(f"❌ 风控决策渲染失败: {e}")
 
     dqs = final_state.get("data_quality_summary", "")
     if dqs:
         with st.expander("✅ 数据质量", expanded=False):
-            st.markdown(str(dqs))
+            try:
+                st.markdown(str(dqs))
+            except Exception as e:
+                st.error(f"❌ 数据质量渲染失败: {e}")
