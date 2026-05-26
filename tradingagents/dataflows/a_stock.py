@@ -758,6 +758,15 @@ def _get_financial_report_sina(
     """Shared helper: fetch financial report via Sina direct HTTP API.
 
     report_type: '资产负债表' | '利润表' | '现金流量表'
+
+    Sina API response structure:
+        result.data.report_list = {
+            "20260331": {"rType": "...", "data": [
+                {"item_title": "货币资金", "item_value": "...", ...},
+                ...
+            ]},
+            "20251231": {...},
+            ...
     """
     _report_type_map = {
         "资产负债表": "fzb",
@@ -779,25 +788,60 @@ def _get_financial_report_sina(
     r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
     d = r.json()
 
-    result = d.get("result", {}).get("data", {})
-    items = result.get(source_type, [])
-    if not isinstance(items, list) or not items:
+    data = d.get("result", {}).get("data", {})
+    report_list = data.get("report_list", {})
+
+    if not isinstance(report_list, dict) or not report_list:
         return pd.DataFrame()
 
-    df = pd.DataFrame(items)
+    # Build rows: each date becomes a column, each item_title becomes a row
+    all_rows = []
+    date_keys = sorted(report_list.keys(), reverse=True)
+
+    for date_key in date_keys:
+        entry = report_list[date_key]
+        if not isinstance(entry, dict):
+            continue
+        items = entry.get("data", [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = item.get("item_title", "")
+            value = item.get("item_value", "")
+            if title:
+                all_rows.append({
+                    "报告日": date_key,
+                    "项目": title,
+                    "数值": value,
+                })
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_rows)
 
     # Filter by curr_date
-    if curr_date and "报告日" in df.columns:
-        df["报告日"] = pd.to_datetime(df["报告日"], errors="coerce")
+    if curr_date:
+        df["报告日_dt"] = pd.to_datetime(df["报告日"], errors="coerce")
         cutoff = pd.to_datetime(curr_date)
-        df = df[df["报告日"] <= cutoff]
+        df = df[df["报告日_dt"] <= cutoff].drop(columns=["报告日_dt"])
 
     # Filter by frequency (annual = month 12 reports only)
-    if freq.lower() == "annual" and "报告日" in df.columns:
+    if freq.lower() == "annual":
         months = pd.to_datetime(df["报告日"], errors="coerce").dt.month
         df = df[months == 12]
 
-    return df.head(8)
+    # Pivot: 项目 as rows, 报告日 as columns
+    if not df.empty and "项目" in df.columns and "报告日" in df.columns:
+        df = df.pivot_table(
+            index="项目", columns="报告日", values="数值",
+            aggfunc="first"
+        ).reset_index()
+        df.columns.name = None
+
+    return df.head(50)
 
 
 def get_balance_sheet(
