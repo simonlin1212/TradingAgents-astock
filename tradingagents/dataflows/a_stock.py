@@ -74,16 +74,27 @@ _code_to_name: dict[str, str] | None = None
 
 
 def _build_name_code_map() -> tuple[dict[str, str], dict[str, str]]:
-    """Build name→code and code→name maps via mootdx (both SH & SZ markets)."""
+    """Build name→code and code→name maps via mootdx (both SH & SZ markets).
+
+    Returns empty maps if mootdx server is unavailable, so that
+    resolve_ticker can still handle 6-digit code inputs.
+    """
     global _name_to_code, _code_to_name
     if _name_to_code is not None:
         return _name_to_code, _code_to_name
 
     from mootdx.quotes import Quotes
 
-    client = Quotes.factory(market="std")
     n2c: dict[str, str] = {}
     c2n: dict[str, str] = {}
+
+    try:
+        client = Quotes.factory(market="std")
+    except Exception as exc:
+        logger.warning("mootdx Quotes factory unavailable (%s), name lookup disabled", exc)
+        _name_to_code = n2c
+        _code_to_name = c2n
+        return _name_to_code, _code_to_name
 
     for market in (0, 1):  # 0=SZ, 1=SH
         stocks = client.stocks(market=market)
@@ -121,7 +132,16 @@ def resolve_ticker(user_input: str) -> str:
         return _normalize_ticker(s)
 
     clean = s.replace(" ", "").replace("　", "")
-    n2c, _ = _build_name_code_map()
+    try:
+        n2c, _ = _build_name_code_map()
+    except Exception:
+        n2c = {}
+
+    if not n2c:
+        raise ValueError(
+            f"股票名称解析服务暂时不可用（mootdx 服务器未配置），"
+            f"请输入 6 位股票代码（如 002185）"
+        )
 
     if clean in n2c:
         return n2c[clean]
@@ -738,6 +758,15 @@ def _get_financial_report_sina(
     """Shared helper: fetch financial report via Sina direct HTTP API.
 
     report_type: '资产负债表' | '利润表' | '现金流量表'
+
+    Sina API response structure:
+        result.data.report_list = {
+            "20260331": {"rType": "...", "data": [
+                {"item_title": "货币资金", "item_value": "...", ...},
+                ...
+            ]},
+            "20251231": {...},
+            ...
     """
     _report_type_map = {
         "资产负债表": "fzb",
@@ -759,25 +788,60 @@ def _get_financial_report_sina(
     r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
     d = r.json()
 
-    result = d.get("result", {}).get("data", {})
-    items = result.get(source_type, [])
-    if not isinstance(items, list) or not items:
+    data = d.get("result", {}).get("data", {})
+    report_list = data.get("report_list", {})
+
+    if not isinstance(report_list, dict) or not report_list:
         return pd.DataFrame()
 
-    df = pd.DataFrame(items)
+    # Build rows: each date becomes a column, each item_title becomes a row
+    all_rows = []
+    date_keys = sorted(report_list.keys(), reverse=True)
+
+    for date_key in date_keys:
+        entry = report_list[date_key]
+        if not isinstance(entry, dict):
+            continue
+        items = entry.get("data", [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = item.get("item_title", "")
+            value = item.get("item_value", "")
+            if title:
+                all_rows.append({
+                    "报告日": date_key,
+                    "项目": title,
+                    "数值": value,
+                })
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_rows)
 
     # Filter by curr_date
-    if curr_date and "报告日" in df.columns:
-        df["报告日"] = pd.to_datetime(df["报告日"], errors="coerce")
+    if curr_date:
+        df["报告日_dt"] = pd.to_datetime(df["报告日"], errors="coerce")
         cutoff = pd.to_datetime(curr_date)
-        df = df[df["报告日"] <= cutoff]
+        df = df[df["报告日_dt"] <= cutoff].drop(columns=["报告日_dt"])
 
     # Filter by frequency (annual = month 12 reports only)
-    if freq.lower() == "annual" and "报告日" in df.columns:
+    if freq.lower() == "annual":
         months = pd.to_datetime(df["报告日"], errors="coerce").dt.month
         df = df[months == 12]
 
-    return df.head(8)
+    # Pivot: 项目 as rows, 报告日 as columns
+    if not df.empty and "项目" in df.columns and "报告日" in df.columns:
+        df = df.pivot_table(
+            index="项目", columns="报告日", values="数值",
+            aggfunc="first"
+        ).reset_index()
+        df.columns.name = None
+
+    return df.head(50)
 
 
 def get_balance_sheet(
@@ -785,7 +849,11 @@ def get_balance_sheet(
     freq: Annotated[str, "frequency: 'annual' or 'quarterly'"] = "quarterly",
     curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None,
 ) -> str:
-    """Get balance sheet via Sina direct HTTP API."""
+    """Get balance sheet via Sina direct HTTP API.
+
+    Also computes and appends key derived metrics (资产负债率) since
+    the raw Sina API does not provide them as standalone fields.
+    """
     code = _normalize_ticker(ticker)
 
     try:
@@ -802,10 +870,154 @@ def get_balance_sheet(
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
 
-        return header + csv_string
+        # Compute derived metrics; also try Sina financial guide for 资产负债率
+        derived = _compute_balance_sheet_metrics(df, code)
+
+        return header + csv_string + derived
 
     except Exception as e:
         return f"Error retrieving balance sheet for {code}: {str(e)}"
+
+
+def _compute_balance_sheet_metrics(df: pd.DataFrame, code: str = None) -> str:
+    """Compute key balance sheet ratios from raw Sina data.
+
+    Strategy:
+    1. Try to fetch 资产负债率 directly from Sina financial guide page (needs code).
+    2. Fallback: compute from balance sheet identity if total liabilities available.
+    3. Last resort: estimate from current ratio if other data missing.
+    """
+    if df.empty or "项目" not in df.columns:
+        return ""
+
+    # Get the latest date column (first date column after "项目")
+    date_cols = [c for c in df.columns if c != "项目"]
+    if not date_cols:
+        return ""
+
+    latest_col = date_cols[-1]  # pivot_table sorts columns asc, so last = most recent
+
+    lines = ["\n## 关键比率 (计算值)"]
+
+    # --- Method 1: Try Sina financial guide page for 资产负债率 ---
+    if code:
+        try:
+            prefix = "sh" if code.startswith("6") else "sz"
+            guide_url = (
+                f"https://money.finance.sina.com.cn/corp/go.php"
+                f"/vFD_FinancialGuideLine/stockid/{code}/ctrl/2025/displaytype/4.phtml"
+            )
+            gr = _requests.get(guide_url, headers={"User-Agent": _UA}, timeout=10)
+            import re as _re
+            idx = gr.text.find("资产负债率(%)")
+            if idx >= 0:
+                row_start = gr.text.rfind("<tr>", 0, idx)
+                row_end = gr.text.find("</tr>", idx)
+                row = gr.text[row_start:row_end]
+                values = _re.findall(r"<td[^>]*>([0-9.]+)</td>", row)
+                if values and float(values[0]) > 0:
+                    lines.append(f"资产负债率: {values[0]}%  (数据来源: 新浪财务指标)")
+                    # Also grab latest date from the page
+                    date_match = _re.search(
+                        r"(\d{4}-\d{2}-\d{2})", gr.text[:500]
+                    )
+                    if date_match:
+                        lines.append(f"  报告期: {date_match.group(1)}")
+                    # Append other ratios if available
+                    for ratio_name, ratio_key in [
+                        ("净资产收益率", "净资产收益率"),
+                        ("毛利率", "主营业务利润率"),
+                    ]:
+                        ri = gr.text.find(ratio_key)
+                        if ri >= 0:
+                            r_start = gr.text.rfind("<tr>", 0, ri)
+                            r_end = gr.text.find("</tr>", ri)
+                            r_row = gr.text[r_start:r_end]
+                            r_vals = _re.findall(r"<td[^>]*>([0-9.]+)</td>", r_row)
+                            if r_vals:
+                                lines.append(f"  {ratio_name}(最新): {r_vals[0]}%")
+                    return "\n".join(lines)
+        except Exception:
+            pass  # Fall through to Method 2
+
+    # --- Method 2: Compute from balance sheet identity ---
+    # Sina balance sheet has: 所有者权益(或股东权益)合计
+    # But may not have 负债合计 (total liabilities).
+    # We compute: 资产负债率 = 总负债 / (总负债 + 所有者权益)
+    #
+    # Available fields in Sina balance sheet:
+    # "所有者权益(或股东权益)合计" — total equity
+    # "流动负债合计" — current liabilities (NOT total)
+    # "负债合计" may or may not be present
+
+    def _find_exact_row(exact_name):
+        """Find row by exact name match."""
+        mask = df["项目"] == exact_name
+        if mask.any():
+            val = df.loc[mask, latest_col].values[0]
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def _find_row_containing(keyword, exclude=None):
+        """Find first row containing keyword, optionally excluding rows with exclude term."""
+        mask = df["项目"].str.contains(keyword, na=False)
+        if exclude:
+            mask = mask & ~df["项目"].str.contains(exclude, na=False)
+        if mask.any():
+            val = df.loc[mask, latest_col].values[0]
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    total_equity = _find_row_containing("所有者权益", exclude="归属于")
+    if total_equity is None:
+        total_equity = _find_exact_row("所有者权益(或股东权益)合计")
+    if total_equity is None:
+        total_equity = _find_exact_row("所有者权益")
+
+    total_liabilities = _find_exact_row("负债合计")
+    if total_liabilities is None:
+        # Try broader match but exclude sub-items
+        total_liabilities = _find_row_containing(
+            "负债合计", exclude="流动"
+        )
+
+    if total_liabilities is not None and total_equity is not None:
+        total_assets = total_liabilities + total_equity
+        if total_assets != 0:
+            ratio = total_liabilities / total_assets * 100
+            lines.append(f"资产负债率: {ratio:.2f}%  (计算值)")
+            lines.append(f"  资产总计({latest_col}): {total_assets/1e8:.2f}亿元")
+            lines.append(f"  负债合计({latest_col}): {total_liabilities/1e8:.2f}亿元")
+            lines.append(f"  所有者权益合计({latest_col}): {total_equity/1e8:.2f}亿元")
+            return "\n".join(lines)
+
+    # --- Method 3: Try fetching from Sina financial guide page ---
+    # We don't have the code here, skip this approach for now.
+
+    # --- Method 4: Best effort with what we have ---
+    # If we only have 流动负债, report it clearly
+    current_liabilities = _find_exact_row("流动负债合计")
+    if current_liabilities is not None and total_equity is not None:
+        lines.append(f"资产负债率: [无法精确计算，缺少负债合计数据]")
+        lines.append(f"  流动负债合计({latest_col}): {current_liabilities/1e8:.2f}亿元")
+        lines.append(f"  所有者权益合计({latest_col}): {total_equity/1e8:.2f}亿元")
+        lines.append(f"  注: 新浪API未提供'负债合计'行，只有'流动负债合计'")
+        lines.append(f"  建议: 使用 get_fundamentals 中的腾讯行情数据获取资产负债率")
+    else:
+        missing = []
+        if total_liabilities is None:
+            missing.append("负债合计")
+        if total_equity is None:
+            missing.append("所有者权益")
+        lines.append(f"资产负债率: [无法计算，缺少{'/'.join(missing)}数据]")
+
+    return "\n".join(lines)
 
 
 # ---- 5. get_cashflow ----
@@ -816,7 +1028,11 @@ def get_cashflow(
     freq: Annotated[str, "frequency: 'annual' or 'quarterly'"] = "quarterly",
     curr_date: Annotated[str, "current date in YYYY-MM-DD format"] = None,
 ) -> str:
-    """Get cash flow statement via Sina direct HTTP API."""
+    """Get cash flow statement via Sina direct HTTP API.
+
+    Also appends 经营活动产生的现金流量净额 and computes
+    经营性现金流与净利润比值 when income statement data is available.
+    """
     code = _normalize_ticker(ticker)
 
     try:
@@ -833,10 +1049,74 @@ def get_cashflow(
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
 
-        return header + csv_string
+        # Compute 经营性现金流与净利润比值
+        derived = _compute_cashflow_metrics(df, code, freq, curr_date)
+
+        return header + csv_string + derived
 
     except Exception as e:
         return f"Error retrieving cash flow for {code}: {str(e)}"
+
+
+def _compute_cashflow_metrics(
+    cf_df: pd.DataFrame, code: str, freq: str, curr_date: str
+) -> str:
+    """Compute 经营性现金流与净利润比值 from cash flow and income data."""
+    if cf_df.empty or "项目" not in cf_df.columns:
+        return ""
+
+    date_cols = [c for c in cf_df.columns if c != "项目"]
+    if not date_cols:
+        return ""
+
+    latest_col = date_cols[-1]  # pivot_table sorts columns asc, so last = most recent
+
+    def _find_cf_row(keyword):
+        mask = cf_df["项目"].str.contains(keyword, na=False)
+        if mask.any():
+            val = cf_df.loc[mask, latest_col].values[0]
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    operating_cf = _find_cf_row("经营活动产生的现金流量净额")
+
+    lines = ["\n## 关键指标 (计算值)"]
+    if operating_cf is not None:
+        lines.append(
+            f"经营活动产生的现金流量净额({latest_col}): {operating_cf/1e8:.2f}亿元"
+        )
+
+        # Try to get net profit from income statement for ratio
+        try:
+            inc_df = _get_financial_report_sina(code, "利润表", freq, curr_date)
+            if not inc_df.empty and "项目" in inc_df.columns:
+                inc_date_cols = [c for c in inc_df.columns if c != "项目"]
+                if inc_date_cols:
+                    inc_latest = inc_date_cols[-1]  # Most recent quarter
+                    mask_np = inc_df["项目"].str.contains("净利润", na=False)
+                    if mask_np.any():
+                        net_profit = float(inc_df.loc[mask_np, inc_latest].values[0])
+                        if net_profit != 0:
+                            ratio = operating_cf / net_profit
+                            lines.append(
+                                f"经营性现金流与净利润比值: {ratio:.2f}"
+                            )
+                            lines.append(
+                                f"  净利润({inc_latest}): {net_profit/1e8:.2f}亿元"
+                            )
+                        else:
+                            lines.append("经营性现金流与净利润比值: [净利润为零，无法计算]")
+                    else:
+                        lines.append("经营性现金流与净利润比值: [利润表中未找到净利润数据]")
+        except Exception:
+            lines.append("经营性现金流与净利润比值: [利润表获取失败，无法计算]")
+    else:
+        lines.append("经营活动产生的现金流量净额: [未找到对应数据行]")
+
+    return "\n".join(lines)
 
 
 # ---- 6. get_income_statement ----
@@ -1598,6 +1878,36 @@ def get_concept_blocks(
 # ---- 14. get_fund_flow ----
 
 
+def _em_push2_request(url: str, params: dict, retries: int = 2, timeout: int = 10) -> dict:
+    """Robust request helper for 东财 push2 API with retry and anti-detection.
+
+    Eastmoney push2 sometimes closes connections immediately (RemoteDisconnected)
+    especially during off-market hours or when request pattern looks automated.
+    This helper adds retry logic with slight header variation to improve success rate.
+    """
+    import requests as _req
+    import time as _time
+
+    _headers_list = [
+        {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"},
+    ]
+
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            headers = _headers_list[attempt % len(_headers_list)]
+            r = _req.get(url, params=params, headers=headers, timeout=timeout)
+            return r.json()
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                _time.sleep(1 + attempt * 2)
+    if last_err:
+        raise last_err
+    raise ConnectionError(f"All {retries} attempts to {url} failed")
+
+
 def get_fund_flow(
     ticker: Annotated[str, "A-stock code"],
     curr_date: Annotated[str, "Date YYYY-MM-DD"],
@@ -1632,8 +1942,7 @@ def get_fund_flow(
             "fields1": "f1,f2,f3,f7",
             "fields2": "f51,f52,f53,f54,f55,f56,f57",
         }
-        r = _req.get(url_rt, params=params_rt, timeout=10)
-        d = r.json()
+        d = _em_push2_request(url_rt, params_rt, retries=2, timeout=10)
         klines = d.get("data", {}).get("klines", [])
 
         if klines:
@@ -1681,32 +1990,32 @@ def get_fund_flow(
                 "fields1": "f1,f2,f3,f7",
                 "fields2": "f51,f52,f53,f54,f55,f56,f57",
             }
-            rh = _req.get(
-                url_hist, params=params_hist, timeout=10
-            )
-            dh = rh.json()
-            hist_klines = dh.get("data", {}).get("klines", [])
+            try:
+                dh = _em_push2_request(url_hist, params_hist, retries=2, timeout=10)
+                hist_klines = dh.get("data", {}).get("klines", [])
 
-            if hist_klines:
-                lines.append(
-                    f"\n## Historical Daily Fund Flow "
-                    f"(last {len(hist_klines)} trading days)"
-                )
-                lines.append(
-                    "Date | 主力净流入(万) | 大单(万) "
-                    "| 中单(万) | 小单(万) | 超大单(万)"
-                )
-                for line in hist_klines:
-                    parts = line.split(",")
-                    if len(parts) >= 6:
-                        lines.append(
-                            f"  {parts[0]} "
-                            f"| main={float(parts[1])/1e4:.0f} "
-                            f"| large={float(parts[4])/1e4:.0f} "
-                            f"| mid={float(parts[3])/1e4:.0f} "
-                            f"| small={float(parts[2])/1e4:.0f} "
-                            f"| super={float(parts[5])/1e4:.0f}"
-                        )
+                if hist_klines:
+                    lines.append(
+                        f"\n## Historical Daily Fund Flow "
+                        f"(last {len(hist_klines)} trading days)"
+                    )
+                    lines.append(
+                        "Date | 主力净流入(万) | 大单(万) "
+                        "| 中单(万) | 小单(万) | 超大单(万)"
+                    )
+                    for hline in hist_klines:
+                        parts = hline.split(",")
+                        if len(parts) >= 6:
+                            lines.append(
+                                f"  {parts[0]} "
+                                f"| main={float(parts[1])/1e4:.0f} "
+                                f"| large={float(parts[4])/1e4:.0f} "
+                                f"| mid={float(parts[3])/1e4:.0f} "
+                                f"| small={float(parts[2])/1e4:.0f} "
+                                f"| super={float(parts[5])/1e4:.0f}"
+                            )
+            except Exception as e:
+                lines.append(f"\n[Historical fund flow unavailable: {e}]")
 
         return "\n".join(lines)
 
@@ -1959,8 +2268,7 @@ def get_industry_comparison(
             "fs": "m:90+t:2",
             "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
         }
-        r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
-        d = r.json()
+        d = _em_push2_request(url, params, retries=2, timeout=15)
         items = d.get("data", {}).get("diff", [])
 
         if items:

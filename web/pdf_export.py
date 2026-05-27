@@ -7,7 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import logging
 from fpdf import FPDF
+
+logger = logging.getLogger(__name__)
 
 
 _FONT_CANDIDATES = [
@@ -203,7 +206,14 @@ class _ReportPDF(FPDF):
                     bullet = f"  {m.group(1)} "
                     body = m.group(2)
                 body = _strip_md_inline(body)
-                self.multi_cell(0, 5.5, bullet + body)
+                full_text = bullet + body
+                if len(full_text) > 400:
+                    full_text = full_text[:397] + "..."
+                    logger.warning(f"PDF bullet truncated ({len(full_text)} chars)")
+                try:
+                    self.multi_cell(0, 5.5, full_text)
+                except Exception as e:
+                    logger.error(f"PDF multi_cell (bullet) failed: {e}")
                 i += 1
                 continue
 
@@ -217,7 +227,17 @@ class _ReportPDF(FPDF):
                 self.set_text_color(60, 60, 60)
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
                 row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.multi_cell(0, 5, row_text)
+                # Truncate overly long rows to prevent FPDF multi_cell crash
+                # A4 width ~190mm, at 9pt CJK ~2 chars/mm → ~380 chars max
+                if len(row_text) > 350:
+                    row_text = row_text[:347] + "..."
+                    logger.warning(f"PDF table row truncated ({len(row_text)} chars)")
+                try:
+                    self.multi_cell(0, 5, row_text)
+                except Exception as e:
+                    logger.error(f"PDF multi_cell failed for table row: {e}")
+                    logger.error(f"  row_text[:200] = {row_text[:200]!r}")
+                    # Skip this row instead of crashing
                 i += 1
                 continue
 
@@ -235,7 +255,13 @@ class _ReportPDF(FPDF):
                 self.set_text_color(40, 40, 40)
                 para = " ".join(para_lines)
                 para = _strip_md_inline(para)
-                self.multi_cell(0, 5.5, para)
+                if len(para) > 500:
+                    para = para[:497] + "..."
+                    logger.warning(f"PDF paragraph truncated ({len(para)} chars)")
+                try:
+                    self.multi_cell(0, 5.5, para)
+                except Exception as e:
+                    logger.error(f"PDF multi_cell (paragraph) failed: {e}")
                 self.ln(2)
                 continue
 
@@ -253,7 +279,11 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
     for key, title in _REPORT_SECTIONS:
         content = final_state.get(key, "")
         if content:
-            pdf.add_section(title, str(content))
+            try:
+                pdf.add_section(title, str(content))
+            except Exception as e:
+                logger.error(f"PDF section '{title}' failed: {e}")
+                # Skip failed section, continue with others
 
     debate = final_state.get("investment_debate_state")
     if debate and isinstance(debate, dict):

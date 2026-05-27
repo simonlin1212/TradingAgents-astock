@@ -177,6 +177,7 @@ if start_req:
 tracker: ProgressTracker | None = st.session_state.get("tracker")
 viewing_history: str | None = st.session_state.get("viewing_history")
 
+
 # State 1: Viewing a historical analysis
 if viewing_history:
     try:

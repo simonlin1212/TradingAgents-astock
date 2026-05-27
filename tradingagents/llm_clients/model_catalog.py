@@ -114,7 +114,25 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Custom model ID", "custom"),
         ],
     },
-    # OpenRouter: fetched dynamically. Azure: any deployed model name.
+    "openrouter": {
+        "quick": [
+            ("OWL Alpha ( Nous Hermes 4 ) - OpenRouter default", "openrouter/owl-alpha"),
+            ("DeepSeek V4 Flash - Fast & capable", "deepseek/deepseek-v4-flash"),
+            ("DeepSeek V4 Flash (free) - No cost", "deepseek/deepseek-v4-flash:free"),
+            ("MiniMax M2.7 Highspeed - Fast Chinese", "minimaxai/minimax-m2.7-highspeed"),
+            ("Qwen 3.5 Flash - Alibaba fast", "qwen/qwen3.5-flash"),
+            ("Custom model ID", "custom"),
+        ],
+        "deep": [
+            ("OWL Alpha ( Nous Hermes 4 ) - OpenRouter default", "openrouter/owl-alpha"),
+            ("DeepSeek V4 Pro - Flagship reasoning", "deepseek/deepseek-v4-pro"),
+            ("Claude Sonnet 4.6 - Anthropic via OR", "anthropic/claude-sonnet-4-6"),
+            ("GPT-5.4 - OpenAI via OR", "openai/gpt-5.4"),
+            ("Gemini 3.1 Pro - Google via OR", "google/gemini-3.1-pro-preview"),
+            ("Custom model ID", "custom"),
+        ],
+    },
+    # Ollama: local models
     "ollama": {
         "quick": [
             ("Qwen3:latest (8B, local)", "qwen3:latest"),
