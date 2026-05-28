@@ -133,9 +133,15 @@ st.markdown(
 
 def _build_config() -> dict:
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = st.session_state.get("llm_provider", "minimax")
-    config["deep_think_llm"] = st.session_state.get("deep_think_llm", "MiniMax-M2.7")
-    config["quick_think_llm"] = st.session_state.get("quick_think_llm", "MiniMax-M2.7-highspeed")
+    provider = st.session_state.get("llm_provider", "minimax")
+    config["llm_provider"] = provider
+    config["backend_url"] = st.session_state.get("backend_url")
+    if provider == "mimo":
+        config["deep_think_llm"] = st.session_state.get("deep_think_llm", "mimo-v2.5-pro")
+        config["quick_think_llm"] = st.session_state.get("quick_think_llm", "mimo-v2.5")
+    else:
+        config["deep_think_llm"] = st.session_state.get("deep_think_llm", "MiniMax-M2.7")
+        config["quick_think_llm"] = st.session_state.get("quick_think_llm", "MiniMax-M2.7-highspeed")
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
         "technical_indicators": "a_stock",
