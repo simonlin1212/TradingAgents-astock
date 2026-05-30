@@ -21,7 +21,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +136,20 @@ class TraderProposal(BaseModel):
         default=None,
         description="Optional sizing guidance, e.g. '5% of portfolio'.",
     )
+
+    @field_validator("entry_price", "stop_loss", mode="before")
+    @classmethod
+    def _normalize_optional_price(cls, value):
+        if isinstance(value, str) and value.strip().lower() in {
+            "",
+            "none",
+            "null",
+            "n/a",
+            "na",
+            "-",
+        }:
+            return None
+        return value
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:

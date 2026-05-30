@@ -17,9 +17,11 @@ from __future__ import annotations
 from typing import Annotated
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+from io import StringIO
 import json as _json
 import os
 import logging
+import hashlib
 import math
 import re as _re
 import uuid
@@ -31,6 +33,76 @@ import requests as _requests
 from .utils import safe_ticker_component
 
 logger = logging.getLogger(__name__)
+
+_DIRECT_HTTP_HOST_MARKERS = ("eastmoney.com",)
+_DIRECT_HTTP_SESSION = _requests.Session()
+_DIRECT_HTTP_SESSION.trust_env = False
+
+
+def _http_get(url: str, **kwargs):
+    """Prefer direct connections for selected CN data sources.
+
+    Some domestic endpoints behave poorly when inherited system proxies are
+    enabled. For selected domains, try a direct request first and then retry
+    with the normal environment proxy settings if the direct path fails.
+    """
+    if any(marker in url for marker in _DIRECT_HTTP_HOST_MARKERS):
+        try:
+            return _DIRECT_HTTP_SESSION.get(url, **kwargs)
+        except _requests.RequestException as direct_error:
+            logger.debug(
+                "direct HTTP request failed for %s; retrying with environment proxies: %s",
+                url,
+                direct_error,
+            )
+            return _requests.get(url, **kwargs)
+    return _requests.get(url, **kwargs)
+
+
+def _cls_sign(params: dict) -> str:
+    """Generate the web signature used by cls.cn v1 APIs."""
+
+    def _sort_key(value) -> str:
+        return str(value).upper()
+
+    def _to_text(value) -> str:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return str(value)
+
+    def _flatten(key: str, value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (str, int, float, bool)):
+            return f"{key}={_to_text(value)}"
+        if isinstance(value, list):
+            if not value:
+                return f"{key}[]"
+            return "&".join(
+                part for part in (
+                    _flatten(f"{key}[{index}]", item)
+                    for index, item in enumerate(value)
+                )
+                if part
+            )
+        if isinstance(value, dict):
+            return "&".join(
+                part for part in (
+                    _flatten(f"{key}[{child_key}]", value[child_key])
+                    for child_key in sorted(value, key=_sort_key)
+                )
+                if part
+            )
+        return ""
+
+    query = "&".join(
+        part for part in (
+            _flatten(key, params[key]) for key in sorted(params, key=_sort_key)
+        )
+        if part
+    )
+    sha1 = hashlib.sha1(query.encode("utf-8")).hexdigest()
+    return hashlib.md5(sha1.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +298,7 @@ def _eastmoney_datacenter(
         "source": "WEB",
         "client": "WEB",
     }
-    r = _requests.get(
+    r = _http_get(
         _DATACENTER_URL, params=params, headers={"User-Agent": _UA}, timeout=15
     )
     d = r.json()
@@ -252,7 +324,7 @@ def _ths_eps_forecast(code: str) -> pd.DataFrame:
     }
     r = _requests.get(url, headers=headers, timeout=15)
     r.encoding = "gbk"
-    dfs = pd.read_html(r.text)
+    dfs = pd.read_html(StringIO(r.text))
     # Find the table containing EPS data
     for df in dfs:
         cols = [str(c) for c in df.columns]
@@ -617,7 +689,7 @@ def get_fundamentals(
                 "fields": "f57,f58,f84,f85,f127,f116,f117,f189,f43",
                 "secid": f"{market_code}.{code}",
             }
-            r = _requests.get(
+            r = _http_get(
                 _info_url, params=_info_params,
                 headers={"User-Agent": _UA}, timeout=10,
             )
@@ -907,7 +979,7 @@ def _fetch_news_eastmoney(code: str, page_size: int = 20) -> list[dict]:
         ),
     }
 
-    resp = _requests.get(url, params=params, headers=headers, timeout=15)
+    resp = _http_get(url, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
     text = resp.text
     text = text[text.index("(") + 1 : text.rindex(")")]
@@ -1047,14 +1119,28 @@ def get_global_news(
 
     # Source 1: CLS wire (财联社快讯) — direct HTTP
     try:
-        cls_url = "https://www.cls.cn/nodeapi/telegraphList"
-        cls_params = {"rn": str(limit), "page": "1"}
-        cls_headers = {"User-Agent": _UA, "Referer": "https://www.cls.cn/"}
-        r_cls = _requests.get(cls_url, params=cls_params, headers=cls_headers, timeout=10)
+        cls_url = "https://www.cls.cn/v1/roll/get_roll_list"
+        cls_params = {
+            "app": "CailianpressWeb",
+            "last_time": int(datetime.now().timestamp()),
+            "os": "web",
+            "refresh_type": 1,
+            "rn": int(limit),
+            "sv": "8.7.9",
+        }
+        cls_params["sign"] = _cls_sign(cls_params)
+        cls_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": _UA,
+            "Referer": "https://www.cls.cn/telegraph",
+        }
+        r_cls = _http_get(cls_url, params=cls_params, headers=cls_headers, timeout=10)
         d_cls = r_cls.json()
+        if str(d_cls.get("errno")) not in ("0", ""):
+            raise ValueError(f"CLS API errno={d_cls.get('errno')} msg={d_cls.get('msg')}")
         for item in d_cls.get("data", {}).get("roll_data", []):
-            title = item.get("title", "") or item.get("brief", "")
-            content = item.get("content", "") or item.get("brief", "")
+            title = item.get("title", "") or item.get("brief", "") or item.get("content", "")
+            content = item.get("content", "") or item.get("brief", "") or title
             ctime = item.get("ctime", "")
             # ctime is unix timestamp
             pub_time = ""
@@ -1070,7 +1156,20 @@ def get_global_news(
                 "source": "CLS Wire",
             })
     except Exception as e:
-        logger.warning("CLS news fetch failed: %s", e)
+        status_code = getattr(locals().get("r_cls"), "status_code", "N/A")
+        preview = ""
+        resp = locals().get("r_cls")
+        if resp is not None:
+            try:
+                preview = (resp.text or "")[:120].replace("\n", " ").replace("\r", " ")
+            except Exception:
+                preview = "<unavailable>"
+        logger.warning(
+            "CLS news fetch failed: %s | status=%s | preview=%r",
+            e,
+            status_code,
+            preview,
+        )
 
     # Source 2: Eastmoney global (东财7x24资讯) — direct HTTP
     try:
@@ -1084,7 +1183,7 @@ def get_global_news(
             "req_trace": str(uuid.uuid4()),
         }
         em_headers = {"User-Agent": _UA, "Referer": "https://kuaixun.eastmoney.com/"}
-        r_em = _requests.get(em_url, params=em_params, headers=em_headers, timeout=10)
+        r_em = _http_get(em_url, params=em_params, headers=em_headers, timeout=10)
         d_em = r_em.json()
         for item in d_em.get("data", {}).get("fastNewsList", []):
             title = item.get("title", "")
@@ -1959,7 +2058,7 @@ def get_industry_comparison(
             "fs": "m:90+t:2",
             "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
         }
-        r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
+        r = _http_get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
         d = r.json()
         items = d.get("data", {}).get("diff", [])
 

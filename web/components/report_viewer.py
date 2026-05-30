@@ -24,13 +24,13 @@ def _signal_style(signal: str) -> tuple[str, str]:
 
 
 _ANALYST_SECTIONS = [
-    ("market_report", "📊 技术分析"),
-    ("sentiment_report", "💬 市场情绪"),
-    ("news_report", "📰 新闻舆情"),
-    ("fundamentals_report", "📋 基本面"),
-    ("policy_report", "🏛️ 政策分析"),
-    ("hot_money_report", "🔥 游资追踪"),
-    ("lockup_report", "🔒 解禁/减持"),
+    ("market_report", "技术分析"),
+    ("sentiment_report", "市场情绪"),
+    ("news_report", "新闻舆情"),
+    ("fundamentals_report", "基本面"),
+    ("policy_report", "政策分析"),
+    ("hot_money_report", "游资追踪"),
+    ("lockup_report", "解禁/减持"),
 ]
 
 
@@ -42,13 +42,15 @@ def render_report(
     elapsed: float | None = None,
 ) -> None:
     """Render the full analysis report."""
-
-    color, cn_signal = _signal_style(signal)
+    color, _cn_signal = _signal_style(signal)
 
     stats_html = ""
     if elapsed is not None:
-        m, s = divmod(int(elapsed), 60)
-        stats_html = f'<div style="font-size:0.9rem; color:#888; margin-top:0.3rem;">耗时 {m}:{s:02d}</div>'
+        minutes, seconds = divmod(int(elapsed), 60)
+        stats_html = (
+            f'<div style="font-size:0.9rem; color:#888; margin-top:0.3rem;">'
+            f"耗时 {minutes}:{seconds:02d}</div>"
+        )
 
     st.markdown(
         f"""
@@ -73,29 +75,32 @@ def render_report(
         unsafe_allow_html=True,
     )
 
-    st.caption("⚠️ 本报告由 AI 自动生成，仅供学习研究，不构成投资建议。")
+    st.caption("本报告由 AI 自动生成，仅供学习研究，不构成投资建议。")
 
-    col_pdf, col_spacer = st.columns([1, 3])
+    col_pdf, _col_spacer = st.columns([1, 3])
     with col_pdf:
-        pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
-        st.download_button(
-            "📥 下载 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+        try:
+            pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
+        except Exception as exc:
+            st.warning(f"PDF 生成失败：{exc}")
+        else:
+            st.download_button(
+                "下载 PDF 报告",
+                data=pdf_bytes,
+                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     st.markdown("---")
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        st.markdown("### 👔 最终投资建议")
+        st.markdown("### 最终投资建议")
         st.markdown(_strip_think(str(inv_plan)))
         st.markdown("---")
 
-    st.markdown("### 📊 分析师报告")
-
+    st.markdown("### 分析师报告")
     for key, title in _ANALYST_SECTIONS:
         content = final_state.get(key, "")
         if not content:
@@ -105,7 +110,7 @@ def render_report(
 
     debate = final_state.get("investment_debate_state")
     if debate and isinstance(debate, dict):
-        st.markdown("### ⚔️ 多空辩论")
+        st.markdown("### 多空辩论")
         tab_bull, tab_bear, tab_judge = st.tabs(["多方", "空方", "研究经理"])
         with tab_bull:
             st.markdown(_strip_think(debate.get("bull_history", "") or "无数据"))
@@ -116,12 +121,12 @@ def render_report(
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
-        with st.expander("💹 交易员决策", expanded=False):
+        with st.expander("交易员决策", expanded=False):
             st.markdown(_strip_think(str(trader_decision)))
 
     risk = final_state.get("risk_debate_state")
     if risk and isinstance(risk, dict):
-        st.markdown("### 🛡️ 风控评估")
+        st.markdown("### 风控评估")
         tab_agg, tab_con, tab_neu, tab_rj = st.tabs(["激进", "保守", "中性", "风控决策"])
         with tab_agg:
             st.markdown(_strip_think(risk.get("aggressive_history", "") or "无数据"))
@@ -134,5 +139,5 @@ def render_report(
 
     dqs = final_state.get("data_quality_summary", "")
     if dqs:
-        with st.expander("✅ 数据质量", expanded=False):
+        with st.expander("数据质量", expanded=False):
             st.markdown(str(dqs))

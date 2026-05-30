@@ -11,10 +11,11 @@ from web.history import get_history
 
 # Provider display names in recommended order
 _PROVIDERS: list[tuple[str, str]] = [
-    ("MiniMax（推荐·国内直连）", "minimax"),
+    ("MiniMax（推荐）", "minimax"),
     ("DeepSeek", "deepseek"),
-    ("通义千问 Qwen", "qwen"),
-    ("智谱 GLM", "glm"),
+    ("Qwen", "qwen"),
+    ("GLM", "glm"),
+    ("Xiaomi MiMo", "mimo"),
     ("OpenAI", "openai"),
     ("Anthropic", "anthropic"),
     ("Google Gemini", "google"),
@@ -27,29 +28,24 @@ _PROVIDER_KEYS = [key for _, key in _PROVIDERS]
 
 
 def _resolve_user_input(raw: str) -> tuple[str, str | None]:
-    """Resolve raw user input to (ticker_code, error_msg).
-
-    Accepts 6-digit codes or Chinese stock names (e.g. '宝光股份').
-    Returns (code, None) on success or ("", error_msg) on failure.
-    """
+    """Resolve raw user input to (ticker_code, error_msg)."""
     from tradingagents.dataflows.a_stock import resolve_ticker
 
     try:
         code = resolve_ticker(raw)
         return code, None
-    except ValueError as e:
-        return "", str(e)
+    except ValueError as exc:
+        return "", str(exc)
 
 
 def _render_llm_config() -> None:
     """Render LLM provider and model selection controls."""
-
     provider_idx = st.selectbox(
-        "LLM 供应商",
+        "LLM 提供商",
         range(len(_PROVIDERS)),
         format_func=lambda i: _PROVIDER_DISPLAY[i],
         key="llm_provider_idx",
-        help="选择你配置了 API Key 的供应商",
+        help="选择你已配置 API Key 的提供商",
     )
     provider_key = _PROVIDER_KEYS[provider_idx]
     st.session_state["llm_provider"] = provider_key
@@ -77,7 +73,7 @@ def _render_llm_config() -> None:
             range(len(deep_options)),
             format_func=lambda i: deep_labels[i],
             key="deep_model_idx",
-            help="用于辩论/决策等需要深度推理的任务",
+            help="用于辩论和决策等更依赖推理的任务",
         )
         st.session_state["deep_think_llm"] = deep_values[deep_idx]
     else:
@@ -89,13 +85,12 @@ def _render_llm_config() -> None:
 
 def render_sidebar() -> None:
     """Render the sidebar with input controls and history."""
-
     st.markdown(
         """
         <div style="text-align:center; margin-bottom:1.5rem;">
             <span style="font-size:2rem; font-weight:800; color:#ff5a1f;">Trading</span><span style="font-size:2rem; font-weight:800; color:#f5f1eb;">Agents</span><span style="font-size:2rem; font-weight:800; color:#f5f1eb;">-</span><span style="font-size:2rem; font-weight:800; color:#ff5a1f;">Astock</span>
             <div style="font-size:0.85rem; color:#888; margin-top:0.2rem;">
-                A股多Agent投研系统
+                A 股多 Agent 投研系统
             </div>
             <div style="font-size:0.7rem; color:#555; margin-top:0.3rem;">
                 by <a href="https://github.com/simonlin1212" style="color:#ff5a1f; text-decoration:none;">simonlin1212</a>
@@ -110,9 +105,9 @@ def render_sidebar() -> None:
 
     ticker = st.text_input(
         "股票代码",
-        placeholder="例: 300750 或 宁德时代",
+        placeholder="例：300750 或 宁德时代",
         key="input_ticker",
-        help="输入6位A股代码或中文股票全称",
+        help="输入 6 位 A 股代码或中文股票全称",
     )
 
     trade_date = st.date_input(
@@ -121,24 +116,25 @@ def render_sidebar() -> None:
         key="input_date",
     )
 
-    with st.expander("⚙️ 模型配置", expanded=False):
+    with st.expander("模型配置", expanded=False):
         _render_llm_config()
 
     tracker = st.session_state.get("tracker")
     is_busy = tracker is not None and tracker.is_running
+    button_label = "开始分析" if not is_busy else "分析进行中..."
 
     if st.button(
-        "开始分析" if not is_busy else "分析进行中...",
+        button_label,
         use_container_width=True,
         disabled=is_busy or not ticker,
         type="primary",
     ):
         resolved_code, err = _resolve_user_input(ticker)
         if err:
-            st.error(f"❌ {err}")
+            st.error(f"错误：{err}")
         else:
             if resolved_code != ticker.strip():
-                st.success(f"✅ {ticker.strip()} → {resolved_code}")
+                st.success(f"{ticker.strip()} -> {resolved_code}")
             st.session_state["start_analysis"] = {
                 "ticker": resolved_code,
                 "trade_date": trade_date.strftime("%Y-%m-%d"),
@@ -154,11 +150,12 @@ def render_sidebar() -> None:
         return
 
     for entry in history[:20]:
-        t, d = entry["ticker"], entry["date"]
-        label = f"{t}  ·  {d}"
-        if st.button(label, key=f"hist_{t}_{d}", use_container_width=True):
+        ticker_code = entry["ticker"]
+        trade_day = entry["date"]
+        label = f"{ticker_code} | {trade_day}"
+        if st.button(label, key=f"hist_{ticker_code}_{trade_day}", use_container_width=True):
             st.session_state["viewing_history"] = entry["path"]
             st.session_state["start_analysis"] = None
 
     st.markdown("---")
-    st.caption("⚠️ 仅供学习研究，不构成投资建议")
+    st.caption("仅供学习研究，不构成投资建议")
