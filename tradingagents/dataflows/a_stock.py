@@ -79,24 +79,27 @@ def _build_name_code_map() -> tuple[dict[str, str], dict[str, str]]:
     if _name_to_code is not None:
         return _name_to_code, _code_to_name
 
-    from mootdx.quotes import Quotes
-
-    client = Quotes.factory(market="std")
     n2c: dict[str, str] = {}
     c2n: dict[str, str] = {}
 
-    for market in (0, 1):  # 0=SZ, 1=SH
-        stocks = client.stocks(market=market)
-        if stocks is None or stocks.empty:
-            continue
-        for _, row in stocks.iterrows():
-            code = str(row["code"]).strip()
-            name = str(row["name"]).strip()
-            if not _re.match(r"^[036]\d{5}$", code):
+    try:
+        from mootdx.quotes import Quotes
+
+        client = Quotes.factory(market="std")
+        for market in (0, 1):  # 0=SZ, 1=SH
+            stocks = client.stocks(market=market)
+            if stocks is None or stocks.empty:
                 continue
-            clean_name = name.replace(" ", "").replace("　", "")
-            n2c[clean_name] = code
-            c2n[code] = clean_name
+            for _, row in stocks.iterrows():
+                code = str(row["code"]).strip()
+                name = str(row["name"]).strip()
+                if not _re.match(r"^[036]\d{5}$", code):
+                    continue
+                clean_name = name.replace(" ", "").replace("　", "")
+                n2c[clean_name] = code
+                c2n[code] = clean_name
+    except Exception as e:
+        logger.warning("mootdx name-code map failed: %s, name resolution unavailable", e)
 
     _name_to_code = n2c
     _code_to_name = c2n
@@ -780,6 +783,101 @@ def _get_financial_report_sina(
     return df.head(8)
 
 
+def _get_financial_report_eastmoney(
+    code: str, report_type: str, freq: str, curr_date: str = None,
+) -> pd.DataFrame:
+    """Fallback: fetch financial report via 东财 datacenter API.
+
+    report_type: '资产负债表' | '利润表' | '现金流量表'
+    """
+    _report_map = {
+        "资产负债表": "RPT_DMSK_FN_BALANCE",
+        "利润表": "RPT_DMSK_FN_INCOME",
+        "现金流量表": "RPT_DMSK_FN_CASHFLOW",
+    }
+    report_name = _report_map.get(report_type)
+    if not report_name:
+        return pd.DataFrame()
+
+    _col_map = {
+        # 利润表
+        "TOTAL_OPERATE_INCOME": "营业总收入",
+        "TOTAL_OPERATE_COST": "营业总成本",
+        "OPERATE_COST": "营业成本",
+        "SALE_EXPENSE": "销售费用",
+        "MANAGE_EXPENSE": "管理费用",
+        "FINANCE_EXPENSE": "财务费用",
+        "OPERATE_PROFIT": "营业利润",
+        "TOTAL_PROFIT": "利润总额",
+        "PARENT_NETPROFIT": "归母净利润",
+        "DEDUCT_PARENT_NETPROFIT": "扣非净利润",
+        "INCOME_TAX": "所得税",
+        "OPERATE_TAX_ADD": "营业税金及附加",
+        # 资产负债表
+        "TOTAL_ASSETS": "总资产",
+        "FIXED_ASSET": "固定资产",
+        "MONETARYFUNDS": "货币资金",
+        "ACCOUNTS_RECE": "应收账款",
+        "INVENTORY": "存货",
+        "TOTAL_LIABILITIES": "总负债",
+        "ACCOUNTS_PAYABLE": "应付账款",
+        "TOTAL_EQUITY": "所有者权益",
+        "DEBT_ASSET_RATIO": "资产负债率",
+        "CURRENT_RATIO": "流动比率",
+        # 现金流量表
+        "NETCASH_OPERATE": "经营活动现金流净额",
+        "SALES_SERVICES": "销售商品提供劳务收到的现金",
+        "PAY_STAFF_CASH": "支付给职工以及为职工支付的现金",
+        "NETCASH_INVEST": "投资活动现金流净额",
+        "NETCASH_FINANCE": "筹资活动现金流净额",
+        "CCE_ADD": "现金及现金等价物净增加额",
+    }
+
+    try:
+        rows = _eastmoney_datacenter(
+            report_name=report_name,
+            filter_str=f'(SECURITY_CODE="{code}")',
+            page_size=20,
+            sort_columns="REPORT_DATE",
+            sort_types="-1",
+        )
+    except Exception:
+        return pd.DataFrame()
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    # Filter metadata cols, keep useful financial + date
+    keep = ["REPORT_DATE"] + [k for k in _col_map if k in df.columns]
+    df = df[[k for k in keep if k in df.columns]].copy()
+    df.rename(columns=_col_map, inplace=True)
+
+    if "REPORT_DATE" in df.columns:
+        df["报告日"] = pd.to_datetime(df.pop("REPORT_DATE"), errors="coerce")
+
+    if curr_date and "报告日" in df.columns:
+        cutoff = pd.to_datetime(curr_date)
+        df = df[df["报告日"] <= cutoff]
+
+    if freq.lower() == "annual" and "报告日" in df.columns:
+        df = df[df["报告日"].dt.month == 12]
+
+    return df.head(8)
+
+
+def _get_financial_report(
+    code: str, report_type: str, freq: str, curr_date: str = None,
+) -> pd.DataFrame:
+    """Fetch financial report: try Sina first, fall back to East Money."""
+    df = _get_financial_report_sina(code, report_type, freq, curr_date)
+    if not df.empty:
+        return df
+    # Fallback: 东财 datacenter API
+    df = _get_financial_report_eastmoney(code, report_type, freq, curr_date)
+    return df
+
+
 def get_balance_sheet(
     ticker: Annotated[str, "A-stock code"],
     freq: Annotated[str, "frequency: 'annual' or 'quarterly'"] = "quarterly",
@@ -789,7 +887,7 @@ def get_balance_sheet(
     code = _normalize_ticker(ticker)
 
     try:
-        df = _get_financial_report_sina(code, "资产负债表", freq, curr_date)
+        df = _get_financial_report(code, "资产负债表", freq, curr_date)
 
         if df.empty:
             return f"No balance sheet data found for A-stock '{code}'"
@@ -797,7 +895,6 @@ def get_balance_sheet(
         csv_string = df.to_csv(index=False)
 
         header = f"# Balance Sheet for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
@@ -820,7 +917,7 @@ def get_cashflow(
     code = _normalize_ticker(ticker)
 
     try:
-        df = _get_financial_report_sina(code, "现金流量表", freq, curr_date)
+        df = _get_financial_report(code, "现金流量表", freq, curr_date)
 
         if df.empty:
             return f"No cash flow data found for A-stock '{code}'"
@@ -828,7 +925,6 @@ def get_cashflow(
         csv_string = df.to_csv(index=False)
 
         header = f"# Cash Flow for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )
@@ -851,7 +947,7 @@ def get_income_statement(
     code = _normalize_ticker(ticker)
 
     try:
-        df = _get_financial_report_sina(code, "利润表", freq, curr_date)
+        df = _get_financial_report(code, "利润表", freq, curr_date)
 
         if df.empty:
             return f"No income statement data found for A-stock '{code}'"
@@ -859,7 +955,6 @@ def get_income_statement(
         csv_string = df.to_csv(index=False)
 
         header = f"# Income Statement for {code} (A-stock, {freq})\n"
-        header += "# Data source: sina direct HTTP\n"
         header += (
             f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
         )

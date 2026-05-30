@@ -10,19 +10,44 @@ from typing import Any
 from fpdf import FPDF
 
 
-_FONT_CANDIDATES = [
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/STHeiti Light.ttc",
-    "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
-    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+_FONT_CANDIDATES: list[tuple[str, int | None]] = [
+    ("/System/Library/Fonts/PingFang.ttc", None),
+    ("/System/Library/Fonts/STHeiti Light.ttc", None),
+    ("/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf", None),
+    ("/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf", None),
+    # TTC index: 0=JP, 1=KR, 2=SC, 3=TC
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2),
 ]
 
+_FONT_CACHE = Path.home() / ".tradingagents" / "fonts"
 
-def _find_cjk_font() -> str | None:
-    for path in _FONT_CANDIDATES:
-        if Path(path).exists():
-            return path
+
+def _find_cjk_font() -> tuple[str, int | None] | None:
+    # 1) Check font candidates that are standalone TTF/OTF
+    for path, idx in _FONT_CANDIDATES:
+        if Path(path).exists() and idx is None:
+            return path, None
+
+    # 2) Check if we have a cached extracted SC font
+    cached_sc = _FONT_CACHE / "NotoSansSC-Regular.ttf"
+    if cached_sc.exists():
+        return str(cached_sc), None
+
+    # 3) Extract SC from TTC and cache it
+    for ttc_path, idx in _FONT_CANDIDATES:
+        if Path(ttc_path).exists() and idx is not None:
+            try:
+                _FONT_CACHE.mkdir(parents=True, exist_ok=True)
+                from fontTools.ttLib import TTCollection  # type: ignore[import-untyped]
+                ttc = TTCollection(ttc_path)
+                sc_font = ttc.fonts[idx]
+                sc_font.save(str(cached_sc))
+                return str(cached_sc), None
+            except Exception:
+                pass
+            # Fallback: use TTC directly with index
+            return ttc_path, idx
+
     return None
 
 
@@ -67,10 +92,11 @@ class _ReportPDF(FPDF):
         self.signal = signal
         self._has_cjk = False
 
-        font_path = _find_cjk_font()
-        if font_path:
-            self.add_font("CJK", "", font_path, uni=True)
-            self.add_font("CJK", "B", font_path, uni=True)
+        font_info = _find_cjk_font()
+        if font_info:
+            font_path, cfn = font_info
+            self.add_font("CJK", "", font_path)
+            self.add_font("CJK", "B", font_path)
             self._has_cjk = True
 
     def _use_font(self, style: str = "", size: int = 10) -> None:
@@ -145,6 +171,19 @@ class _ReportPDF(FPDF):
         cleaned = _strip_think(content)
         self._render_markdown(cleaned)
 
+    def _safe_mc(self, w: int, h: float, text: str, **kwargs) -> None:
+        """multi_cell wrapper that resets x and avoids overflow crashes."""
+        self.x = self.l_margin
+        avail = self.w - self.l_margin - self.r_margin
+        if avail <= 0:
+            return  # no space at all — skip
+        try:
+            self.multi_cell(w if w else avail, h, text, **kwargs)
+        except FPDFException:
+            # Fallback: render truncated text if multi_cell can't break lines
+            if len(text) > 10:
+                self._safe_mc(w, h, text[:text.rfind(" ", 0, 300)] + " …", **kwargs)
+
     def _render_markdown(self, text: str) -> None:
         """Render markdown-formatted text with basic styling."""
         lines = text.split("\n")
@@ -203,7 +242,7 @@ class _ReportPDF(FPDF):
                     bullet = f"  {m.group(1)} "
                     body = m.group(2)
                 body = _strip_md_inline(body)
-                self.multi_cell(0, 5.5, bullet + body)
+                self._safe_mc(0, 5.5, bullet + body)
                 i += 1
                 continue
 
@@ -216,8 +255,8 @@ class _ReportPDF(FPDF):
                 self._use_font("", 9)
                 self.set_text_color(60, 60, 60)
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
-                row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.multi_cell(0, 5, row_text)
+                row_text = "  ".join(_strip_md_inline(c) for c in cells)
+                self._safe_mc(0, 5, row_text)
                 i += 1
                 continue
 
@@ -235,7 +274,7 @@ class _ReportPDF(FPDF):
                 self.set_text_color(40, 40, 40)
                 para = " ".join(para_lines)
                 para = _strip_md_inline(para)
-                self.multi_cell(0, 5.5, para)
+                self._safe_mc(0, 5.5, para)
                 self.ln(2)
                 continue
 

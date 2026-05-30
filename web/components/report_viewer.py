@@ -7,7 +7,7 @@ from typing import Any
 
 import streamlit as st
 
-from web.pdf_export import generate_pdf
+from web.pdf_chrome import generate_pdf
 
 
 def _strip_think(text: str) -> str:
