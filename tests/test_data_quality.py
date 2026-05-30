@@ -9,10 +9,10 @@ import traceback
 
 sys.path.insert(0, ".")
 
-TICKER = "300750"
-TRADE_DATE = "2026-05-12"
+TICKER = "000725" # "300750"
+TRADE_DATE = "2026-05-22"
 START_DATE = "2026-04-01"
-END_DATE = "2026-05-12"
+END_DATE = "2026-05-22"
 
 from tradingagents.dataflows.a_stock import (
     get_stock_data,

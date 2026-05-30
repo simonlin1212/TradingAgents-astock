@@ -12,6 +12,7 @@ license = {text = "Apache-2.0"}
 authors = [
     {name = "simonlin1212", email = "simonlin1212@users.noreply.github.com"},
 ]
+
 dependencies = [
     "langchain-core>=0.3.81",
     "backtrader>=1.9.78.123",
@@ -20,7 +21,7 @@ dependencies = [
     "langchain-openai>=0.3.23",
     "langgraph>=0.4.8",
     "langgraph-checkpoint-sqlite>=2.0.0",
-    "pandas>=2.3.0",
+    "pandas>=1.5.3,<3.0",
     "parsel>=1.10.0",
     "pytz>=2025.2",
     "questionary>=2.1.0",
@@ -33,10 +34,12 @@ dependencies = [
     "tqdm>=4.67.1",
     "typing-extensions>=4.14.0",
     "yfinance>=0.2.63",
-    "streamlit>=1.45.0",
+    "streamlit>=1.27.0,<1.45.0",
     "fpdf2>=2.8.0",
     "python-dotenv>=1.1.0",
     "mootdx>=0.10.0",
+    "httpx>=0.25.0,<0.26.0",
+    "tenacity>=8.1.0,<9.0.0",
 ]
 
 [project.urls]
