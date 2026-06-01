@@ -6,6 +6,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.2.11] — 2026-05-30
+
+### Changed
+
+- **东财接口统一限流防封（移植自 a-stock-data v3.2）**：数据层 `a_stock.py` 里所有指向
+  `eastmoney.com` 的请求（push2 / push2his / datacenter-web / search-api / np-weblist
+  共 7 个调用点）统一收口到新的节流入口 `_em_get()`，多 Agent 投研跑批量分析时不再触发
+  临时封 IP（社区实测东财风控：每秒 >5 / 并发 ≥10 / 1 分钟 ≥200 / 5 分钟 ≥300 触发封禁，
+  多位用户反馈过）。具体：
+  - 模块级 last-call 时间戳 + 最小间隔 `EM_MIN_INTERVAL`（默认 1.0s，可用同名环境变量覆盖）
+    + 0.1~0.5s 随机抖动，串行限流，QPS ≤ 1；
+  - 复用 `requests.Session`（Keep-Alive）+ 默认 UA；各端点保留自己的 Referer/Origin header；
+  - **仅东财接口限流**——mootdx(TCP) / 腾讯 / 新浪 / 同花顺 / 财联社 / 百度 等非东财源
+    不受影响（实测不封 IP）。批量场景可设 `EM_MIN_INTERVAL=1.5~2` 进一步降速。
+
+### Tested
+
+- 实测 4 次连续 `_em_get` 请求东财 push2（600519 = 贵州茅台），HTTP 200 返回真实数据；
+  相邻调用间隔 1.47 / 1.18 / 1.42s 均 ≥1.0s，限流生效。
+- `get_industry_comparison` / `get_fund_flow` / `get_dragon_tiger_board` 三个东财公共函数
+  端到端跑通（走同一已验证的 `_em_get` 通道）；`py_compile` 通过；grep 复核：7 个 `_em_get`
+  调用点 + 0 个残留 `_req.` + 8 个非东财源（mootdx/腾讯/新浪/同花顺/财联社/百度）未被误伤。
+
+---
+
+## [0.2.10] — 2026-05-30
+
+### Added
+
+- **Web UI 支持第三方 / 代理 API 网关（#35）**：侧边栏新增「API Base URL」输入框，
+  也可在 `.env` 设 `BACKEND_URL`。方便国内用户通过中转网关访问 Claude / OpenAI 等模型
+  （API Key 仍从 `.env` 读取，如 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）。
+  侧边栏输入优先于环境变量，留空则用所选供应商官方地址。
+
+---
+
+## [0.2.9] — 2026-05-30
+
+### Added
+
+- **Markdown 报告导出**：分析结果页新增「下载 Markdown」按钮。MD 导出零字体依赖、
+  跨平台永远可用，是 PDF 之外的稳妥兜底（#17 多位用户请求）。
+
+### Fixed
+
+- **PDF 中文字体跨平台崩溃（#22 / #30 / #31）**：原 `_FONT_CANDIDATES` 只列了
+  macOS/Linux 字体，Windows 用户找不到中文字体 → fpdf 回退 Helvetica → 渲染中文时
+  抛 `FPDFUnicodeEncodingException` / `Character "股" ... outside the range`。
+  现改为**按操作系统排序的字体候选**（Windows 微软雅黑/黑体/宋体、macOS 苹方、
+  Linux Noto/文泉驿）+ 递归扫描字体目录兜底。
+- **PDF 失败拖垮整个结果页**：`generate_pdf` 原先在结果页渲染时被 eager 调用，一旦
+  报错整页崩成 traceback，用户连分析结果都看不到。现改为 **try/except 包裹 + 懒生成**，
+  PDF 失败只禁用 PDF 按钮并提示改用 Markdown，分析报告照常显示。
+- **长串中文表格/段落渲染报错（#31）**：`multi_cell` 遇到无空格的长中文串抛
+  `Not enough horizontal space to render a single character`。已为内容 `multi_cell`
+  加 `wrapmode="CHAR"` 并复位左边距，中文按字符正确换行。
+- **缺字体时优雅降级**：系统无任何中文字体时，`generate_pdf` 抛出清晰中文报错
+  （指引安装字体或改用 Markdown），不再是深层 fpdf traceback。
+
+### Tested
+
+- Streamlit 1.50 环境用 fpdf2 2.8.4 实测：含中文标题、表格、列表、200 字无空格长串的
+  报告成功生成 7 页 PDF（目视确认中文渲染无乱码、长串正确换行）；Markdown 导出正常；
+  无字体路径正确抛 RuntimeError。
+
+---
+
+## [0.2.8] — 2026-05-30
+
+### Fixed
+
+- **Web UI 侧边栏收起后无法展开（#36）**：为录视频清爽化界面的自定义 CSS 把整个
+  顶栏 `stHeader` 和工具栏 `stToolbar` 都 `display:none` 掉了。但 Streamlit ≥1.36 的
+  「展开侧边栏」按钮 `stExpandSidebarButton` 正好嵌在工具栏内部，于是侧边栏一旦收起
+  ——无论是手动点收起箭头，还是**页面缩放 / 窄屏时 Streamlit 自动收起**——展开按钮
+  跟着被隐藏，再也调不出来，刷新、重启都没用。原先那行兜底的 `collapsedControl`
+  选择器是旧版 DOM，在 1.45+ 已不存在，等于没写。
+  修复：不再整个隐藏顶栏/工具栏，改为**保留二者、将 header 透明化、只精准隐藏
+  Deploy 按钮 / 主菜单 / 状态条 / 装饰条**，侧边栏展开按钮恢复可见可点，录屏依旧干净。
+  已用 Streamlit 1.50 + headless Chrome 在收起/展开两种状态下实测验证。
+
+---
+
 ## [0.2.7] — 2026-05-19
 
 ### Fixed

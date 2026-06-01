@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -40,12 +41,34 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
 
-    /* Hide Streamlit chrome for clean video recording */
-    #MainMenu, header[data-testid="stHeader"],
-    footer, div[data-testid="stDecoration"],
-    div[data-testid="stToolbar"] { display: none !important; }
-    /* Ensure sidebar collapse/expand control is always visible */
-    button[data-testid="collapsedControl"] { display: flex !important; }
+    /* Hide Streamlit chrome for clean video recording.
+       IMPORTANT: do NOT `display:none` the whole header OR the whole toolbar.
+       In Streamlit >= 1.36 the "expand sidebar" button lives *inside* the
+       toolbar (header > stToolbar > stExpandSidebarButton), so hiding either
+       one makes a collapsed sidebar impossible to reopen (issue #36). Instead
+       keep the header/toolbar in the DOM, make the header transparent, and
+       hide only the individual chrome widgets we don't want on camera. */
+    #MainMenu,
+    footer,
+    div[data-testid="stDecoration"],
+    div[data-testid="stStatusWidget"],
+    div[data-testid="stToolbarActions"],
+    div[data-testid="stAppDeployButton"],
+    span[data-testid="stMainMenu"] { display: none !important; }
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    /* Keep the sidebar collapse / expand controls always visible & clickable.
+       Selector list spans multiple Streamlit versions. */
+    button[data-testid="stExpandSidebarButton"],
+    button[data-testid="stSidebarCollapseButton"],
+    button[data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
 
     html, body, [class*="css"] {
         font-family: 'Inter', -apple-system, sans-serif;
@@ -136,6 +159,9 @@ def _build_config() -> dict:
     config["llm_provider"] = st.session_state.get("llm_provider", "minimax")
     config["deep_think_llm"] = st.session_state.get("deep_think_llm", "MiniMax-M2.7")
     config["quick_think_llm"] = st.session_state.get("quick_think_llm", "MiniMax-M2.7-highspeed")
+    # Optional third-party / proxy endpoint. Sidebar input wins, else .env BACKEND_URL.
+    backend_url = (st.session_state.get("llm_base_url") or os.getenv("BACKEND_URL") or "").strip()
+    config["backend_url"] = backend_url or None
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
         "technical_indicators": "a_stock",

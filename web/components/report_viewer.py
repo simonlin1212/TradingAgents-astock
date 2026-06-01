@@ -7,7 +7,7 @@ from typing import Any
 
 import streamlit as st
 
-from web.pdf_export import generate_pdf
+from web.pdf_export import generate_markdown, generate_pdf
 
 
 def _strip_think(text: str) -> str:
@@ -75,16 +75,35 @@ def render_report(
 
     st.caption("⚠️ 本报告由 AI 自动生成，仅供学习研究，不构成投资建议。")
 
-    col_pdf, col_spacer = st.columns([1, 3])
-    with col_pdf:
-        pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
+    # Markdown export always works (no font dependency); PDF is generated
+    # lazily and guarded so a PDF/font failure never crashes the results page.
+    col_md, col_pdf, col_spacer = st.columns([1, 1, 2])
+    with col_md:
+        md_text = generate_markdown(final_state, ticker, trade_date, signal)
         st.download_button(
-            "📥 下载 PDF 报告",
-            data=pdf_bytes,
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
-            mime="application/pdf",
+            "📥 下载 Markdown",
+            data=md_text.encode("utf-8"),
+            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.md",
+            mime="text/markdown",
             use_container_width=True,
         )
+    with col_pdf:
+        try:
+            pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
+            st.download_button(
+                "📄 下载 PDF",
+                data=pdf_bytes,
+                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as exc:  # noqa: BLE001 — never let PDF crash the page
+            st.button(
+                "📄 PDF 不可用",
+                disabled=True,
+                use_container_width=True,
+                help=f"PDF 生成失败，请改用 Markdown 导出。原因：{exc}",
+            )
 
     st.markdown("---")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import platform
 import re
 from datetime import datetime
 from pathlib import Path
@@ -10,19 +11,85 @@ from typing import Any
 from fpdf import FPDF
 
 
-_FONT_CANDIDATES = [
+# Per-OS CJK font candidates. The current OS's fonts are tried first so a
+# user on Windows/Linux/macOS all get a working PDF without manual config.
+_WIN_FONTS = [
+    "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
+    "C:/Windows/Fonts/msyhbd.ttc",    # 微软雅黑 Bold
+    "C:/Windows/Fonts/simhei.ttf",    # 黑体
+    "C:/Windows/Fonts/simsun.ttc",    # 宋体
+    "C:/Windows/Fonts/simfang.ttf",   # 仿宋
+]
+_MAC_FONTS = [
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
+_LINUX_FONTS = [
     "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
     "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
 ]
+
+# Substrings that reliably indicate a CJK-capable font during the recursive
+# fallback scan (deliberately excludes bare "noto", which also matches the
+# Latin-only Noto family).
+_CJK_FONT_KEYWORDS = (
+    "msyh", "simhei", "simsun", "simfang", "yahei", "fangsong",
+    "pingfang", "heiti", "stheiti", "stsong", "songti", "kaiti",
+    "hiragino sans gb", "arial unicode",
+    "notosanscjk", "notoserifcjk", "notosanssc", "notoserifsc",
+    "sourcehansans", "sourcehanserif", "wqy", "uming", "ukai",
+)
+
+
+def _font_candidates() -> list[str]:
+    """Return CJK font paths ordered with the current OS's fonts first."""
+    system = platform.system()
+    if system == "Windows":
+        return _WIN_FONTS + _MAC_FONTS + _LINUX_FONTS
+    if system == "Darwin":
+        return _MAC_FONTS + _WIN_FONTS + _LINUX_FONTS
+    return _LINUX_FONTS + _MAC_FONTS + _WIN_FONTS
+
+
+def _search_dirs() -> list[str]:
+    home = Path.home()
+    system = platform.system()
+    if system == "Windows":
+        return ["C:/Windows/Fonts"]
+    if system == "Darwin":
+        return ["/System/Library/Fonts", "/Library/Fonts", str(home / "Library/Fonts")]
+    return ["/usr/share/fonts", "/usr/local/share/fonts", str(home / ".fonts")]
 
 
 def _find_cjk_font() -> str | None:
-    for path in _FONT_CANDIDATES:
+    """Locate a CJK-capable TTF/TTC/OTF font, cross-platform.
+
+    1. Try the known per-OS candidate paths.
+    2. Fall back to recursively scanning common font directories for any
+       file whose name looks CJK-capable.
+    """
+    for path in _font_candidates():
         if Path(path).exists():
             return path
+
+    for directory in _search_dirs():
+        dpath = Path(directory)
+        if not dpath.exists():
+            continue
+        for ext in ("*.ttc", "*.ttf", "*.otf"):
+            try:
+                for font_path in sorted(dpath.rglob(ext)):
+                    if any(k in font_path.name.lower() for k in _CJK_FONT_KEYWORDS):
+                        return str(font_path)
+            except OSError:
+                continue
     return None
 
 
@@ -65,19 +132,18 @@ class _ReportPDF(FPDF):
         self.ticker = ticker
         self.trade_date = trade_date
         self.signal = signal
-        self._has_cjk = False
-
         font_path = _find_cjk_font()
-        if font_path:
-            self.add_font("CJK", "", font_path, uni=True)
-            self.add_font("CJK", "B", font_path, uni=True)
-            self._has_cjk = True
+        if not font_path:
+            raise RuntimeError(
+                "未找到可用的中文字体，无法生成 PDF。请安装一款中文字体后重试"
+                "（Windows 自带微软雅黑/黑体，macOS 自带苹方，Linux 可 "
+                "`apt install fonts-noto-cjk`），或改用「下载 Markdown」导出。"
+            )
+        self.add_font("CJK", "", font_path)
+        self.add_font("CJK", "B", font_path)
 
     def _use_font(self, style: str = "", size: int = 10) -> None:
-        if self._has_cjk:
-            self.set_font("CJK", style, size)
-        else:
-            self.set_font("Helvetica", style, size)
+        self.set_font("CJK", style, size)
 
     def header(self) -> None:
         self._use_font("", 8)
@@ -203,7 +269,8 @@ class _ReportPDF(FPDF):
                     bullet = f"  {m.group(1)} "
                     body = m.group(2)
                 body = _strip_md_inline(body)
-                self.multi_cell(0, 5.5, bullet + body)
+                self.set_x(self.l_margin)
+                self.multi_cell(0, 5.5, bullet + body, wrapmode="CHAR")
                 i += 1
                 continue
 
@@ -217,7 +284,8 @@ class _ReportPDF(FPDF):
                 self.set_text_color(60, 60, 60)
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
                 row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.multi_cell(0, 5, row_text)
+                self.set_x(self.l_margin)
+                self.multi_cell(0, 5, row_text, wrapmode="CHAR")
                 i += 1
                 continue
 
@@ -235,25 +303,25 @@ class _ReportPDF(FPDF):
                 self.set_text_color(40, 40, 40)
                 para = " ".join(para_lines)
                 para = _strip_md_inline(para)
-                self.multi_cell(0, 5.5, para)
+                self.set_x(self.l_margin)
+                self.multi_cell(0, 5.5, para, wrapmode="CHAR")
                 self.ln(2)
                 continue
 
             i += 1
 
 
-def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> bytes:
-    """Generate a PDF report and return it as bytes."""
-    pdf = _ReportPDF(ticker, trade_date, signal)
-    pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=20)
+def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
+    """Assemble the (title, content) report sections shared by PDF & Markdown.
 
-    pdf.add_cover()
+    Keeps both export formats in sync from a single source of truth.
+    """
+    sections: list[tuple[str, str]] = []
 
     for key, title in _REPORT_SECTIONS:
         content = final_state.get(key, "")
         if content:
-            pdf.add_section(title, str(content))
+            sections.append((title, _strip_think(str(content))))
 
     debate = final_state.get("investment_debate_state")
     if debate and isinstance(debate, dict):
@@ -265,15 +333,15 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
         if debate.get("judge_decision"):
             parts.append(f"\n=== 研究经理决策 ===\n{debate['judge_decision']}")
         if parts:
-            pdf.add_section("多空辩论", "\n".join(parts))
+            sections.append(("多空辩论", _strip_think("\n".join(parts))))
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
-        pdf.add_section("交易员决策", _strip_think(str(trader_decision)))
+        sections.append(("交易员决策", _strip_think(str(trader_decision))))
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        pdf.add_section("最终投资建议", _strip_think(str(inv_plan)))
+        sections.append(("最终投资建议", _strip_think(str(inv_plan))))
 
     risk = final_state.get("risk_debate_state")
     if risk and isinstance(risk, dict):
@@ -286,10 +354,57 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
         if risk.get("judge_decision"):
             parts.append(f"\n=== 风控决策 ===\n{risk['judge_decision']}")
         if parts:
-            pdf.add_section("风控评估", "\n".join(parts))
+            sections.append(("风控评估", _strip_think("\n".join(parts))))
 
     final_decision = final_state.get("final_trade_decision", "")
     if final_decision:
-        pdf.add_section("最终决策", _strip_think(str(final_decision)))
+        sections.append(("最终决策", _strip_think(str(final_decision))))
+
+    return sections
+
+
+def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> bytes:
+    """Generate a PDF report and return it as bytes.
+
+    Raises RuntimeError if no CJK font is available on the system — callers
+    should catch this and fall back to Markdown export.
+    """
+    pdf = _ReportPDF(ticker, trade_date, signal)
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=20)
+
+    pdf.add_cover()
+    for title, content in _collect_sections(final_state):
+        pdf.add_section(title, content)
 
     return bytes(pdf.output())
+
+
+def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> str:
+    """Generate a Markdown report. Font-free and always works — the safe export.
+
+    This is the bulletproof alternative to PDF when the system lacks a CJK
+    font (common on minimal Linux/Windows installs).
+    """
+    out = [
+        "# A股多Agent投研分析报告",
+        "",
+        f"- **股票代码**：{ticker}",
+        f"- **分析日期**：{trade_date}",
+        f"- **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"- **交易信号**：**{signal.upper()}**",
+        "",
+        "> ⚠️ 本报告由 AI 多 Agent 系统自动生成，仅供学习研究与技术演示，"
+        "不构成任何投资建议。投资决策请咨询持牌专业机构，使用本报告所产生的"
+        "任何损失由使用者自行承担。",
+        "",
+        "---",
+        "",
+    ]
+    for title, content in _collect_sections(final_state):
+        out.append(f"## {title}")
+        out.append("")
+        out.append(content)
+        out.append("")
+
+    return "\n".join(out)

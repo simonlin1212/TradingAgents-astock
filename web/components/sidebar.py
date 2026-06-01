@@ -86,6 +86,18 @@ def _render_llm_config() -> None:
         st.session_state["quick_think_llm"] = custom_quick
         st.session_state["deep_think_llm"] = custom_deep
 
+    st.text_input(
+        "API Base URL（第三方/代理，可选）",
+        key="llm_base_url",
+        placeholder="例: https://your-proxy.com/v1",
+        help=(
+            "通过第三方中转/代理访问 Claude、OpenAI 等模型时填写网关地址；"
+            "留空则用所选供应商的官方地址。API Key 仍从 .env 读取"
+            "（如 ANTHROPIC_API_KEY / OPENAI_API_KEY）。"
+            "也可在 .env 里设 BACKEND_URL 代替此处。"
+        ),
+    )
+
 
 def render_sidebar() -> None:
     """Render the sidebar with input controls and history."""

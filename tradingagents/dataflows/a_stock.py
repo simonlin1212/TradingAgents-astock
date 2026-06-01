@@ -21,7 +21,9 @@ import json as _json
 import os
 import logging
 import math
+import random
 import re as _re
+import time
 import uuid
 import urllib.request
 
@@ -206,6 +208,40 @@ _DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 _UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 
+# ---------------------------------------------------------------------------
+# 东财防封：全局节流 + 会话复用 (Eastmoney anti-ban: throttle + Keep-Alive)
+# ---------------------------------------------------------------------------
+# 东财系 HTTP 接口（push2 / push2his / datacenter-web / search-api / np-weblist）
+# 有风控：每秒 >5 次 / 单 IP 并发 ≥10 / 1 分钟 ≥200 次 / 5 分钟 ≥300 次 → 临时封 IP。
+# 多 Agent 投研跑批量分析时会高频请求东财，是被封的头号元凶。所有 eastmoney.com
+# 请求一律走 _em_get()：串行限流（最小间隔 + 随机抖动）+ 复用 Keep-Alive 会话 + 默认 UA。
+# 注意：仅东财接口走此入口；mootdx(TCP) / 腾讯 / 新浪 / 同花顺 / 财联社 / 百度 等
+# 不限流（实测不封 IP 或风控极弱）。批量任务可调大 EM_MIN_INTERVAL 进一步降速。
+_EM_SESSION = _requests.Session()
+_EM_SESSION.headers.update({"User-Agent": _UA})
+# 两次东财请求最小间隔(秒)；批量多 Agent 场景可设环境变量 EM_MIN_INTERVAL=1.5~2 降速。
+_EM_MIN_INTERVAL = float(os.environ.get("EM_MIN_INTERVAL", "1.0"))
+_em_last_call = [0.0]  # 模块级上次东财请求时间戳
+
+
+def _em_get(url, params=None, headers=None, timeout=15, **kwargs):
+    """东财统一请求入口：自动节流 + 复用 session + 默认 UA。
+
+    所有 eastmoney.com 接口都应通过它请求，避免多 Agent 高频拉数据被封 IP。
+    串行限流：与上次东财请求间隔 < EM_MIN_INTERVAL 时 sleep 补足 + 0.1~0.5s 随机抖动。
+    传入的 headers 会覆盖 session 默认 UA（用于保留各端点自己的 Referer/Origin）。
+    """
+    wait = _EM_MIN_INTERVAL - (time.time() - _em_last_call[0])
+    if wait > 0:
+        time.sleep(wait + random.uniform(0.1, 0.5))
+    try:
+        return _EM_SESSION.get(
+            url, params=params, headers=headers, timeout=timeout, **kwargs
+        )
+    finally:
+        _em_last_call[0] = time.time()
+
+
 def _eastmoney_datacenter(
     report_name: str,
     columns: str = "ALL",
@@ -226,9 +262,7 @@ def _eastmoney_datacenter(
         "source": "WEB",
         "client": "WEB",
     }
-    r = _requests.get(
-        _DATACENTER_URL, params=params, headers={"User-Agent": _UA}, timeout=15
-    )
+    r = _em_get(_DATACENTER_URL, params=params, timeout=15)
     d = r.json()
     if d.get("result") and d["result"].get("data"):
         return d["result"]["data"]
@@ -617,10 +651,7 @@ def get_fundamentals(
                 "fields": "f57,f58,f84,f85,f127,f116,f117,f189,f43",
                 "secid": f"{market_code}.{code}",
             }
-            r = _requests.get(
-                _info_url, params=_info_params,
-                headers={"User-Agent": _UA}, timeout=10,
-            )
+            r = _em_get(_info_url, params=_info_params, timeout=10)
             d = r.json().get("data", {})
             if d:
                 if d.get("f127"):
@@ -951,7 +982,7 @@ def _fetch_news_eastmoney(code: str, page_size: int = 20) -> list[dict]:
         ),
     }
 
-    resp = _requests.get(url, params=params, headers=headers, timeout=15)
+    resp = _em_get(url, params=params, headers=headers, timeout=15)
     resp.raise_for_status()
     text = resp.text
     text = text[text.index("(") + 1 : text.rindex(")")]
@@ -1128,7 +1159,7 @@ def get_global_news(
             "req_trace": str(uuid.uuid4()),
         }
         em_headers = {"User-Agent": _UA, "Referer": "https://kuaixun.eastmoney.com/"}
-        r_em = _requests.get(em_url, params=em_params, headers=em_headers, timeout=10)
+        r_em = _em_get(em_url, params=em_params, headers=em_headers, timeout=10)
         d_em = r_em.json()
         for item in d_em.get("data", {}).get("fastNewsList", []):
             title = item.get("title", "")
@@ -1657,8 +1688,6 @@ def get_fund_flow(
     V0.2.7: replaced 百度 PAE (fundflow/fundsortlist, offline since 2026-05)
     with 东财 push2 fund flow API.
     """
-    import requests as _req
-
     code = _normalize_ticker(ticker)
     secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
     lines = [
@@ -1676,7 +1705,7 @@ def get_fund_flow(
             "fields1": "f1,f2,f3,f7",
             "fields2": "f51,f52,f53,f54,f55,f56,f57",
         }
-        r = _req.get(url_rt, params=params_rt, timeout=10)
+        r = _em_get(url_rt, params=params_rt, timeout=10)
         d = r.json()
         klines = d.get("data", {}).get("klines", [])
 
@@ -1725,9 +1754,7 @@ def get_fund_flow(
                 "fields1": "f1,f2,f3,f7",
                 "fields2": "f51,f52,f53,f54,f55,f56,f57",
             }
-            rh = _req.get(
-                url_hist, params=params_hist, timeout=10
-            )
+            rh = _em_get(url_hist, params=params_hist, timeout=10)
             dh = rh.json()
             hist_klines = dh.get("data", {}).get("klines", [])
 
@@ -2003,7 +2030,7 @@ def get_industry_comparison(
             "fs": "m:90+t:2",
             "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207",
         }
-        r = _requests.get(url, params=params, headers={"User-Agent": _UA}, timeout=15)
+        r = _em_get(url, params=params, timeout=15)
         d = r.json()
         items = d.get("data", {}).get("diff", [])
 
