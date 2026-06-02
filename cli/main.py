@@ -613,8 +613,19 @@ def get_user_selections():
 
 
 def get_ticker():
-    """Get ticker symbol from user input."""
-    return typer.prompt("", default="SPY")
+    """Get ticker symbol from user input.
+
+    Raises typer.Exit(1) if the ticker contains path-traversal characters
+    or is otherwise invalid as a filesystem path component.
+    """
+    raw = typer.prompt("", default="SPY")
+    from tradingagents.dataflows.utils import safe_ticker_component
+    try:
+        safe_ticker_component(raw)
+    except ValueError as exc:
+        console.print(f"[red]Error: Invalid ticker — {exc}[/red]")
+        raise typer.Exit(1)
+    return raw
 
 
 def get_analysis_date():
@@ -1185,13 +1196,23 @@ def run_analysis(checkpoint: bool = False):
             "Save path (press Enter for default)",
             default=str(default_path)
         ).strip()
-        save_path = Path(save_path_str)
+        save_path = Path(save_path_str).resolve()
+        # Warn if the resolved path escapes the current working directory
         try:
-            report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
-            console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
-            console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
-        except Exception as e:
-            console.print(f"[red]Error saving report: {e}[/red]")
+            save_path.relative_to(Path.cwd().resolve())
+        except ValueError:
+            console.print(f"[yellow]⚠  Save path is outside current directory: {save_path}[/yellow]")
+            confirm = typer.prompt("Proceed?", default="N").strip().upper()
+            if confirm not in ("Y", "YES"):
+                console.print("[yellow]Report not saved.[/yellow]")
+                save_choice = "N"
+        if save_choice in ("Y", "YES", ""):
+            try:
+                report_file = save_report_to_disk(final_state, selections["ticker"], save_path)
+                console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
+                console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
+            except Exception as e:
+                console.print(f"[red]Error saving report: {e}[/red]")
 
     # Prompt to display full report
     display_choice = typer.prompt("\nDisplay full report on screen?", default="Y").strip().upper()
