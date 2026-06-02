@@ -39,8 +39,14 @@ def get_ticker() -> str:
 
 
 def normalize_ticker_symbol(ticker: str) -> str:
-    """Normalize ticker input while preserving exchange suffixes."""
-    return ticker.strip().upper()
+    """Normalize ticker input while preserving exchange suffixes.
+
+    Raises ValueError if ticker contains path-traversal characters.
+    """
+    ticker = ticker.strip().upper()
+    from tradingagents.dataflows.utils import safe_ticker_component
+    safe_ticker_component(ticker)  # rejects / .. ~ and other path-dangerous chars
+    return ticker
 
 
 def get_analysis_date() -> str:
