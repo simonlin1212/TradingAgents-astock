@@ -37,6 +37,13 @@ def render_progress(tracker: ProgressTracker) -> None:
         unsafe_allow_html=True,
     )
 
+    if tracker.stop_requested:
+        st.caption("正在停止当前分析并清空内容；收尾完成后可重新开始。")
+        return
+
+    if tracker.is_paused:
+        st.caption("当前分析已暂停。")
+
     completed = len(tracker.completed_stages)
     total = len(PIPELINE_STAGES)
     pct = completed / total if total else 0

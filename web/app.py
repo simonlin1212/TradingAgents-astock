@@ -21,7 +21,7 @@ from tradingagents.default_config import DEFAULT_CONFIG  # noqa: E402
 from web.components.progress_panel import render_progress  # noqa: E402
 from web.components.report_viewer import render_report  # noqa: E402
 from web.components.sidebar import render_sidebar  # noqa: E402
-from web.history import extract_signal, load_analysis  # noqa: E402
+from web.history import clear_incomplete_task, extract_signal, load_analysis  # noqa: E402
 from web.progress import ProgressTracker  # noqa: E402
 from web.runner import run_analysis_in_thread  # noqa: E402
 
@@ -171,6 +171,7 @@ def _build_config() -> dict:
     }
     config["max_debate_rounds"] = 1
     config["max_risk_discuss_rounds"] = 1
+    config["checkpoint_enabled"] = True
     config["output_language"] = "Chinese"
     return config
 
@@ -185,11 +186,22 @@ with st.sidebar:
 
 start_req = st.session_state.pop("start_analysis", None)
 if start_req:
+    if start_req.get("fresh"):
+        from tradingagents.graph.checkpointer import clear_checkpoint
+
+        clear_incomplete_task(start_req["ticker"], start_req["trade_date"])
+        clear_checkpoint(
+            DEFAULT_CONFIG["data_cache_dir"],
+            start_req["ticker"],
+            start_req["trade_date"],
+        )
+
     tracker = ProgressTracker(
         ticker=start_req["ticker"],
         trade_date=start_req["trade_date"],
     )
     st.session_state["tracker"] = tracker
+    st.session_state["viewing_history"] = None
     run_analysis_in_thread(
         ticker=start_req["ticker"],
         trade_date=start_req["trade_date"],
@@ -233,8 +245,13 @@ elif tracker and tracker.is_complete:
 # State 4: Analysis errored
 elif tracker and tracker.error:
     st.error(f"分析失败: {tracker.error}")
-    if st.button("重试"):
-        st.session_state.pop("tracker", None)
+    st.caption("已完成阶段会保存在本地断点中；修复模型额度或配置后，可以继续未完成的部分。")
+    if st.button("继续未完成任务", type="primary"):
+        st.session_state["start_analysis"] = {
+            "ticker": tracker.ticker,
+            "trade_date": tracker.trade_date,
+        }
+        st.session_state["viewing_history"] = None
         st.rerun()
 
 # State 0: Idle — welcome screen
