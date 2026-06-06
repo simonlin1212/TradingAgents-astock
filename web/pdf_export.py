@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import platform
+import os
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import fpdf as _fpdf_mod
 from fpdf import FPDF
+from fpdf.enums import WrapMode
 
 
 # fpdf2 (maintained fork) and the abandoned pyfpdf 1.x BOTH import as `fpdf`, and
@@ -19,6 +21,112 @@ from fpdf import FPDF
 # (issue #54). Detect the wrong library up front and tell the user exactly how to
 # fix it, instead of letting the PDF blow up mid-render.
 _FPDF_VERSION = getattr(_fpdf_mod, "__version__", None) or getattr(_fpdf_mod, "FPDF_VERSION", "0")
+
+_PDF_FONT_ENV = "TRADINGAGENTS_PDF_FONT"
+_PDF_BOLD_FONT_ENV = "TRADINGAGENTS_PDF_BOLD_FONT"
+
+_FONT_CANDIDATES = [
+    (
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    ),
+    (
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    ),
+    (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    ),
+    (
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+    ),
+    (
+        "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Bold.otf",
+    ),
+    (
+        "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSC-Bold.ttf",
+    ),
+    (
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ),
+    (
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+    ),
+    (
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+    ),
+    (
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+    ),
+    (
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simhei.ttf",
+    ),
+]
+
+_FONT_NAME_CANDIDATES = [
+    ("WenQuanYi Micro Hei", "Regular"),
+    ("WenQuanYi Zen Hei", "Regular"),
+    ("Noto Sans CJK SC", "Regular"),
+    ("Noto Sans CJK SC", "Bold"),
+    ("Noto Sans SC", "Regular"),
+    ("Noto Sans SC", "Bold"),
+    ("Source Han Sans SC", "Regular"),
+    ("Source Han Sans SC", "Bold"),
+]
+
+_FONT_FILE_PATTERNS = (
+    "wqy-microhei.ttc",
+    "wqy-zenhei.ttc",
+    "NotoSansCJK-Regular.ttc",
+    "NotoSansCJK-Bold.ttc",
+    "NotoSansCJKsc-Regular.otf",
+    "NotoSansCJKsc-Bold.otf",
+    "NotoSansSC-Regular.ttf",
+    "NotoSansSC-Bold.ttf",
+    "SourceHanSansSC-Regular.otf",
+    "SourceHanSansSC-Bold.otf",
+    "DroidSansFallbackFull.ttf",
+)
+
+_CJK_FONT_MARKERS = (
+    "NotoSansCJK",
+    "NotoSansSC",
+    "NotoSerifCJK",
+    "SourceHanSans",
+    "SourceHanSerif",
+    "wqy-",
+    "DroidSansFallback",
+    "PingFang",
+    "STHeiti",
+    "msyh",
+    "simhei",
+)
+
+_TTC_SC_FACE_INDEXES = {
+    "NotoSansCJK-Regular.ttc": 2,
+    "NotoSansCJK-Bold.ttc": 2,
+    "NotoSerifCJK-Regular.ttc": 2,
+    "NotoSerifCJK-Bold.ttc": 2,
+}
+
+_SINGLE_FACE_BOLD_FALLBACKS = {
+    "wqy-microhei.ttc",
+    "wqy-zenhei.ttc",
+    "DroidSansFallbackFull.ttf",
+}
+
+
+class PDFExportError(RuntimeError):
+    """Raised when the PDF report cannot be exported."""
 
 
 def _ensure_fpdf2() -> None:
@@ -36,86 +144,136 @@ def _ensure_fpdf2() -> None:
         )
 
 
-# Per-OS CJK font candidates. The current OS's fonts are tried first so a
-# user on Windows/Linux/macOS all get a working PDF without manual config.
-_WIN_FONTS = [
-    "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑
-    "C:/Windows/Fonts/msyhbd.ttc",    # 微软雅黑 Bold
-    "C:/Windows/Fonts/simhei.ttf",    # 黑体
-    "C:/Windows/Fonts/simsun.ttc",    # 宋体
-    "C:/Windows/Fonts/simfang.ttf",   # 仿宋
-]
-_MAC_FONTS = [
-    "/System/Library/Fonts/PingFang.ttc",
-    "/System/Library/Fonts/STHeiti Light.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    "/Library/Fonts/Arial Unicode.ttf",
-]
-_LINUX_FONTS = [
-    "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
-    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
-    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    "/usr/share/fonts/truetype/arphic/uming.ttc",
-]
-
-# Substrings that reliably indicate a CJK-capable font during the recursive
-# fallback scan (deliberately excludes bare "noto", which also matches the
-# Latin-only Noto family).
-_CJK_FONT_KEYWORDS = (
-    "msyh", "simhei", "simsun", "simfang", "yahei", "fangsong",
-    "pingfang", "heiti", "stheiti", "stsong", "songti", "kaiti",
-    "hiragino sans gb", "arial unicode",
-    "notosanscjk", "notoserifcjk", "notosanssc", "notoserifsc",
-    "sourcehansans", "sourcehanserif", "wqy", "uming", "ukai",
-)
+def _font_missing_message() -> str:
+    candidates = ", ".join(regular for regular, _ in _FONT_CANDIDATES[:4])
+    return (
+        "PDF 导出需要可嵌入的 Unicode 中文字体。请优先安装 fonts-wqy-microhei，"
+        f"或设置 {_PDF_FONT_ENV}=/path/to/wqy-microhei.ttc。"
+        f"已检查的常见路径包括: {candidates}"
+    )
 
 
-def _font_candidates() -> list[str]:
-    """Return CJK font paths ordered with the current OS's fonts first."""
-    system = platform.system()
-    if system == "Windows":
-        return _WIN_FONTS + _MAC_FONTS + _LINUX_FONTS
-    if system == "Darwin":
-        return _MAC_FONTS + _WIN_FONTS + _LINUX_FONTS
-    return _LINUX_FONTS + _MAC_FONTS + _WIN_FONTS
+def _env_font_path(env_name: str) -> Path | None:
+    configured = os.getenv(env_name)
+    if not configured:
+        return None
+
+    path = Path(configured).expanduser()
+    if not path.exists():
+        raise PDFExportError(f"{env_name} 指向的字体文件不存在: {path}")
+    return path
 
 
-def _search_dirs() -> list[str]:
-    home = Path.home()
-    system = platform.system()
-    if system == "Windows":
-        return ["C:/Windows/Fonts"]
-    if system == "Darwin":
-        return ["/System/Library/Fonts", "/Library/Fonts", str(home / "Library/Fonts")]
-    return ["/usr/share/fonts", "/usr/local/share/fonts", str(home / ".fonts")]
+def _is_likely_cjk_font(path: Path) -> bool:
+    return any(marker in path.name for marker in _CJK_FONT_MARKERS)
 
 
-def _find_cjk_font() -> str | None:
-    """Locate a CJK-capable TTF/TTC/OTF font, cross-platform.
+def _font_search_roots() -> list[Path]:
+    roots = [
+        Path("/usr/share/fonts"),
+        Path("/usr/local/share/fonts"),
+        Path("~/.local/share/fonts").expanduser(),
+        Path("~/.fonts").expanduser(),
+    ]
+    xdg_data_home = os.getenv("XDG_DATA_HOME")
+    if xdg_data_home:
+        roots.append(Path(xdg_data_home).expanduser() / "fonts")
+    return roots
 
-    1. Try the known per-OS candidate paths.
-    2. Fall back to recursively scanning common font directories for any
-       file whose name looks CJK-capable.
-    """
-    for path in _font_candidates():
-        if Path(path).exists():
-            return path
 
-    for directory in _search_dirs():
-        dpath = Path(directory)
-        if not dpath.exists():
+def _find_font_file(pattern: str) -> Path | None:
+    for root in _font_search_roots():
+        if not root.exists():
             continue
-        for ext in ("*.ttc", "*.ttf", "*.otf"):
-            try:
-                for font_path in sorted(dpath.rglob(ext)):
-                    if any(k in font_path.name.lower() for k in _CJK_FONT_KEYWORDS):
-                        return str(font_path)
-            except OSError:
-                continue
+        matches = sorted(root.rglob(pattern))
+        if matches:
+            return matches[0]
     return None
+
+
+def _font_from_fontconfig(family: str, style: str) -> Path | None:
+    try:
+        output = subprocess.check_output(
+            ["fc-match", "-f", "%{file}", f"{family}:style={style}"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    if not output:
+        return None
+
+    path = Path(output)
+    if path.exists() and _is_likely_cjk_font(path):
+        return path
+    return None
+
+
+def _discover_cjk_fonts() -> tuple[Path, Path] | None:
+    discovered: dict[str, Path] = {}
+
+    for pattern in _FONT_FILE_PATTERNS:
+        path = _find_font_file(pattern)
+        if path:
+            discovered[pattern] = path
+
+    regular = (
+        discovered.get("wqy-microhei.ttc")
+        or discovered.get("wqy-zenhei.ttc")
+        or discovered.get("NotoSansCJK-Regular.ttc")
+        or discovered.get("NotoSansCJKsc-Regular.otf")
+        or discovered.get("NotoSansSC-Regular.ttf")
+        or discovered.get("SourceHanSansSC-Regular.otf")
+        or discovered.get("DroidSansFallbackFull.ttf")
+    )
+    if regular and regular.name in _SINGLE_FACE_BOLD_FALLBACKS:
+        return regular, regular
+
+    bold = (
+        discovered.get("NotoSansCJK-Bold.ttc")
+        or discovered.get("NotoSansCJKsc-Bold.otf")
+        or discovered.get("NotoSansSC-Bold.ttf")
+        or discovered.get("SourceHanSansSC-Bold.otf")
+        or regular
+    )
+    if regular and bold:
+        return regular, bold
+
+    for family, style in _FONT_NAME_CANDIDATES:
+        font_path = _font_from_fontconfig(family, style)
+        if not font_path:
+            continue
+        if style == "Bold" and regular:
+            return regular, font_path
+        if style != "Bold":
+            return font_path, font_path
+
+    return None
+
+
+def _find_cjk_fonts() -> tuple[Path, Path]:
+    env_regular = _env_font_path(_PDF_FONT_ENV)
+    if env_regular:
+        return env_regular, _env_font_path(_PDF_BOLD_FONT_ENV) or env_regular
+
+    for regular_path, bold_path in _FONT_CANDIDATES:
+        regular = Path(regular_path)
+        if regular.exists():
+            bold = Path(bold_path)
+            return regular, bold if bold.exists() else regular
+
+    discovered = _discover_cjk_fonts()
+    if discovered:
+        return discovered
+
+    raise PDFExportError(_font_missing_message())
+
+
+def _collection_font_number(path: Path) -> int:
+    """Select the Simplified Chinese face from known CJK font collections."""
+    return _TTC_SC_FACE_INDEXES.get(path.name, 0)
 
 
 def _strip_think(text: str) -> str:
@@ -129,6 +287,17 @@ def _strip_md_inline(text: str) -> str:
     text = re.sub(r"`(.+?)`", r"\1", text)
     text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
     return text
+
+
+def _compact_inline_text(text: str) -> str:
+    """Collapse table/alignment whitespace that would create wide PDF gaps."""
+    return re.sub(r"[ \t\u3000]{2,}", " ", text).strip()
+
+
+def _format_table_cells(cells: list[str]) -> str:
+    cleaned = [_compact_inline_text(_strip_md_inline(cell)) for cell in cells]
+    cleaned = [cell for cell in cleaned if cell]
+    return " | ".join(cleaned)
 
 
 def _signal_color(signal: str) -> tuple[int, int, int]:
@@ -157,18 +326,38 @@ class _ReportPDF(FPDF):
         self.ticker = ticker
         self.trade_date = trade_date
         self.signal = signal
-        font_path = _find_cjk_font()
-        if not font_path:
-            raise RuntimeError(
-                "未找到可用的中文字体，无法生成 PDF。请安装一款中文字体后重试"
-                "（Windows 自带微软雅黑/黑体，macOS 自带苹方，Linux 可 "
-                "`apt install fonts-noto-cjk`），或改用「下载 Markdown」导出。"
+        regular_font, bold_font = _find_cjk_fonts()
+
+        try:
+            self.add_font(
+                "CJK",
+                "",
+                str(regular_font),
+                collection_font_number=_collection_font_number(regular_font),
             )
-        self.add_font("CJK", "", font_path)
-        self.add_font("CJK", "B", font_path)
+            self.add_font(
+                "CJK",
+                "B",
+                str(bold_font),
+                collection_font_number=_collection_font_number(bold_font),
+            )
+        except Exception as exc:
+            raise PDFExportError(
+                f"无法加载 PDF 中文字体: {regular_font}。"
+                f"请换一个 TTF/OTF/TTC 字体并通过 {_PDF_FONT_ENV} 指定。"
+            ) from exc
 
     def _use_font(self, style: str = "", size: int = 10) -> None:
         self.set_font("CJK", style, size)
+
+    def _text_block_width(self) -> float:
+        return self.w - self.l_margin - self.r_margin
+
+    def _write_multicell(self, height: float, text: str, **kwargs: Any) -> None:
+        self.set_x(self.l_margin)
+        kwargs.setdefault("align", "L")
+        kwargs.setdefault("wrapmode", WrapMode.CHAR)
+        self.multi_cell(self._text_block_width(), height, text, **kwargs)
 
     def header(self) -> None:
         self._use_font("", 8)
@@ -218,8 +407,8 @@ class _ReportPDF(FPDF):
 
         self._use_font("", 9)
         self.set_text_color(120, 120, 120)
-        self.multi_cell(
-            0, 5,
+        self._write_multicell(
+            5,
             "免责声明: 本报告由 AI 多 Agent 系统自动生成, 仅供学习研究与技术演示, "
             "不构成任何投资建议。投资决策请咨询持牌专业机构。"
             "使用本报告所产生的任何损失由使用者自行承担。",
@@ -254,21 +443,21 @@ class _ReportPDF(FPDF):
             if stripped.startswith("###"):
                 self._use_font("B", 11)
                 self.set_text_color(50, 50, 50)
-                self.cell(0, 7, stripped.lstrip("#").strip())
+                self.cell(0, 7, _compact_inline_text(stripped.lstrip("#")))
                 self.ln(8)
                 i += 1
                 continue
             if stripped.startswith("##"):
                 self._use_font("B", 13)
                 self.set_text_color(40, 40, 40)
-                self.cell(0, 8, stripped.lstrip("#").strip())
+                self.cell(0, 8, _compact_inline_text(stripped.lstrip("#")))
                 self.ln(9)
                 i += 1
                 continue
             if stripped.startswith("#"):
                 self._use_font("B", 14)
                 self.set_text_color(255, 90, 31)
-                self.cell(0, 9, stripped.lstrip("#").strip())
+                self.cell(0, 9, _compact_inline_text(stripped.lstrip("#")))
                 self.ln(10)
                 i += 1
                 continue
@@ -293,13 +482,13 @@ class _ReportPDF(FPDF):
                     m = re.match(r"^(\d+[.)])\s*(.*)", stripped)
                     bullet = f"  {m.group(1)} "
                     body = m.group(2)
-                body = _strip_md_inline(body)
-                self.set_x(self.l_margin)
-                self.multi_cell(0, 5.5, bullet + body, wrapmode="CHAR")
+                body = _compact_inline_text(_strip_md_inline(body))
+                self._write_multicell(5.5, bullet + body)
                 i += 1
                 continue
 
-            # Table rows (|col|col|) → render as plain text with spacing
+            # Table rows (|col|col|) → render compactly; fixed-width spacing
+            # creates large visual gaps in proportional PDF fonts.
             if stripped.startswith("|") and stripped.endswith("|"):
                 # Skip separator rows like |---|---|
                 if re.match(r"^\|[-:\s|]+\|$", stripped):
@@ -308,9 +497,8 @@ class _ReportPDF(FPDF):
                 self._use_font("", 9)
                 self.set_text_color(60, 60, 60)
                 cells = [c.strip() for c in stripped.strip("|").split("|")]
-                row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.set_x(self.l_margin)
-                self.multi_cell(0, 5, row_text, wrapmode="CHAR")
+                row_text = _format_table_cells(cells)
+                self._write_multicell(5, row_text)
                 i += 1
                 continue
 
@@ -327,9 +515,8 @@ class _ReportPDF(FPDF):
                 self._use_font("", 10)
                 self.set_text_color(40, 40, 40)
                 para = " ".join(para_lines)
-                para = _strip_md_inline(para)
-                self.set_x(self.l_margin)
-                self.multi_cell(0, 5.5, para, wrapmode="CHAR")
+                para = _compact_inline_text(_strip_md_inline(para))
+                self._write_multicell(5.5, para)
                 self.ln(2)
                 continue
 
