@@ -6,8 +6,15 @@ from datetime import date
 
 import streamlit as st
 
+from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph.checkpointer import clear_checkpoint
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
-from web.history import get_history
+from web.history import (
+    clear_incomplete_task,
+    get_history,
+    get_incomplete_history,
+    record_incomplete_task,
+)
 
 # Provider display names in recommended order
 _PROVIDERS: list[tuple[str, str]] = [
@@ -39,6 +46,87 @@ def _resolve_user_input(raw: str) -> tuple[str, str | None]:
         return code, None
     except ValueError as e:
         return "", str(e)
+
+
+def _clear_analysis_artifacts(ticker: str, trade_date: str) -> None:
+    clear_incomplete_task(ticker, trade_date)
+    clear_checkpoint(DEFAULT_CONFIG["data_cache_dir"], ticker, trade_date)
+
+
+def _render_analysis_controls(raw_ticker: str, trade_date_value: date) -> None:
+    tracker = st.session_state.get("tracker")
+    is_running = tracker is not None and tracker.is_running
+    trade_date = trade_date_value.strftime("%Y-%m-%d")
+
+    pause_col, resume_col, stop_col = st.columns(3)
+
+    pause_disabled = not is_running or tracker.is_paused or tracker.stop_requested
+    if pause_col.button(
+        "暂停",
+        key="sidebar_pause_analysis",
+        use_container_width=True,
+        disabled=pause_disabled,
+    ):
+        if tracker.pause():
+            record_incomplete_task(
+                tracker.ticker,
+                tracker.trade_date,
+                status="paused",
+                completed_stages=tracker.completed_stages,
+            )
+        st.rerun()
+
+    resume_disabled = not is_running or not tracker.is_paused or tracker.stop_requested
+    if resume_col.button(
+        "恢复",
+        key="sidebar_resume_analysis",
+        use_container_width=True,
+        disabled=resume_disabled,
+    ):
+        if tracker.resume():
+            record_incomplete_task(
+                tracker.ticker,
+                tracker.trade_date,
+                status="running",
+                completed_stages=tracker.completed_stages,
+            )
+        st.rerun()
+
+    can_stop = tracker is not None or bool(raw_ticker.strip())
+    if stop_col.button(
+        "停止",
+        key="sidebar_stop_analysis",
+        use_container_width=True,
+        disabled=not can_stop,
+    ):
+        target_ticker = tracker.ticker if tracker is not None and tracker.ticker else ""
+        target_date = (
+            tracker.trade_date
+            if tracker is not None and tracker.trade_date
+            else trade_date
+        )
+
+        if not target_ticker:
+            target_ticker, err = _resolve_user_input(raw_ticker)
+            if err:
+                st.error(f"❌ {err}")
+                return
+
+        if tracker is not None and tracker.is_running:
+            tracker.request_stop()
+            clear_incomplete_task(target_ticker, target_date)
+        else:
+            if tracker is not None:
+                tracker.mark_stopped()
+                st.session_state["tracker"] = None
+            _clear_analysis_artifacts(target_ticker, target_date)
+
+        st.session_state["viewing_history"] = None
+        st.success("已清空当前进度；下一次开始分析会从头生成。")
+        st.rerun()
+
+    if tracker is not None and tracker.stop_requested:
+        st.caption("正在停止并清空，收尾完成后可重新开始。")
 
 
 def _render_llm_config() -> None:
@@ -141,9 +229,10 @@ def render_sidebar() -> None:
 
     tracker = st.session_state.get("tracker")
     is_busy = tracker is not None and tracker.is_running
+    is_stopping = is_busy and tracker.stop_requested
 
     if st.button(
-        "开始分析" if not is_busy else "分析进行中...",
+        "开始分析" if not is_busy else "停止中..." if is_stopping else "分析进行中...",
         use_container_width=True,
         disabled=is_busy or not ticker,
         type="primary",
@@ -157,8 +246,40 @@ def render_sidebar() -> None:
             st.session_state["start_analysis"] = {
                 "ticker": resolved_code,
                 "trade_date": trade_date.strftime("%Y-%m-%d"),
+                "fresh": True,
             }
             st.session_state["viewing_history"] = None
+
+    _render_analysis_controls(ticker, trade_date)
+
+    st.markdown("---")
+    st.markdown("#### 未完成任务")
+
+    incomplete = get_incomplete_history()
+    if not incomplete:
+        st.caption("暂无未完成任务")
+    else:
+        for entry in incomplete[:10]:
+            t, d = entry["ticker"], entry["trade_date"]
+            status_label = {
+                "error": "出错",
+                "paused": "已暂停",
+                "running": "进行中",
+            }.get(entry.get("status"), "可继续")
+            step = entry.get("checkpoint_step")
+            step_label = f" · step {step}" if step is not None else ""
+            label = f"{t}  ·  {d}  ·  {status_label}{step_label}"
+            if st.button(
+                label,
+                key=f"resume_{t}_{d}",
+                use_container_width=True,
+                disabled=is_busy,
+            ):
+                st.session_state["start_analysis"] = {
+                    "ticker": t,
+                    "trade_date": d,
+                }
+                st.session_state["viewing_history"] = None
 
     st.markdown("---")
     st.markdown("#### 历史记录")

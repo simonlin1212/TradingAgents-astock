@@ -36,6 +36,8 @@ class ProgressTracker:
 
     is_running: bool = False
     is_complete: bool = False
+    is_paused: bool = False
+    stop_requested: bool = False
     error: Optional[str] = None
 
     current_stage: str = ""
@@ -51,13 +53,89 @@ class ProgressTracker:
     tokens_out: int = 0
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _pause_gate: threading.Event = field(
+        default_factory=threading.Event,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        self._pause_gate.set()
+
+    def pause(self) -> bool:
+        """Pause pipeline advancement after the current streamed step finishes."""
+        with self._lock:
+            if (
+                not self.is_running
+                or self.is_complete
+                or self.error
+                or self.is_paused
+                or self.stop_requested
+            ):
+                return False
+            self.is_paused = True
+            self._pause_gate.clear()
+            return True
+
+    def resume(self) -> bool:
+        """Allow the runner thread to continue to the next streamed step."""
+        with self._lock:
+            if not self.is_paused or self.stop_requested:
+                return False
+            self.is_paused = False
+            self._pause_gate.set()
+            return True
+
+    def request_stop(self) -> bool:
+        """Request cancellation and clear user-visible progress immediately."""
+        with self._lock:
+            if not self.is_running or self.is_complete or self.error or self.stop_requested:
+                return False
+            self.stop_requested = True
+            self.is_paused = False
+            self.current_stage = ""
+            self.completed_stages.clear()
+            self.stage_reports.clear()
+            self.final_state = {}
+            self.signal = ""
+            self.llm_calls = 0
+            self.tool_calls = 0
+            self.tokens_in = 0
+            self.tokens_out = 0
+            self._pause_gate.set()
+            return True
+
+    def wait_if_paused(self) -> None:
+        self._pause_gate.wait()
+
+    def mark_stopped(self) -> None:
+        with self._lock:
+            self.is_running = False
+            self.is_complete = False
+            self.is_paused = False
+            self.stop_requested = False
+            self.error = None
+            self.current_stage = ""
+            self.completed_stages.clear()
+            self.stage_reports.clear()
+            self.final_state = {}
+            self.signal = ""
+            self.llm_calls = 0
+            self.tool_calls = 0
+            self.tokens_in = 0
+            self.tokens_out = 0
+            self._pause_gate.set()
 
     def mark_stage_active(self, stage_id: str) -> None:
         with self._lock:
+            if self.stop_requested:
+                return
             self.current_stage = stage_id
 
     def mark_stage_done(self, stage_id: str, report: str = "") -> None:
         with self._lock:
+            if self.stop_requested:
+                return
             if stage_id not in self.completed_stages:
                 self.completed_stages.append(stage_id)
             if report:
@@ -70,14 +148,22 @@ class ProgressTracker:
             self.signal = signal
             self.is_running = False
             self.is_complete = True
+            self.is_paused = False
+            self.stop_requested = False
+            self._pause_gate.set()
 
     def mark_error(self, err: str) -> None:
         with self._lock:
             self.error = err
             self.is_running = False
+            self.is_paused = False
+            self.stop_requested = False
+            self._pause_gate.set()
 
     def update_stats(self, llm: int, tool: int, tok_in: int, tok_out: int) -> None:
         with self._lock:
+            if self.stop_requested:
+                return
             self.llm_calls = llm
             self.tool_calls = tool
             self.tokens_in = tok_in

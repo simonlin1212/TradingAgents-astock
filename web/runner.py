@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 import threading
+import traceback
 from typing import Any
 
+from web.history import clear_incomplete_task, record_incomplete_task
 from web.progress import PIPELINE_STAGES, ProgressTracker
 
 
@@ -15,6 +17,20 @@ _ANALYST_REPORT_KEYS = [
     "market_report", "sentiment_report", "news_report",
     "fundamentals_report", "policy_report", "hot_money_report", "lockup_report",
 ]
+
+
+def _discard_stopped_run(
+    ticker: str,
+    trade_date: str,
+    config: dict,
+    tracker: ProgressTracker,
+) -> None:
+    """Clear resumable artifacts for a user-stopped run."""
+    from tradingagents.graph.checkpointer import clear_checkpoint
+
+    clear_incomplete_task(ticker, trade_date)
+    clear_checkpoint(config["data_cache_dir"], ticker, trade_date)
+    tracker.mark_stopped()
 
 
 def _strip_think_tags(text: str) -> str:
@@ -80,25 +96,67 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
         callbacks=[stats],
     )
 
-    init_state = graph.propagator.create_initial_state(ticker, trade_date)
-    args = graph.propagator.get_graph_args(callbacks=[stats])
+    init_state, args, _ = graph.prepare_graph_run(
+        ticker,
+        trade_date,
+        callbacks=[stats],
+    )
 
     last_chunk: dict[str, Any] = {}
 
-    for chunk in graph.graph.stream(init_state, **args):
-        last_chunk = chunk
-        _detect_completed_stages(chunk, tracker)
-        _infer_active_stage(tracker)
+    try:
+        def _close_and_discard() -> None:
+            graph.close_graph_run()
+            _discard_stopped_run(ticker, trade_date, config, tracker)
 
-        s = stats.get_stats()
-        tracker.update_stats(s["llm_calls"], s["tool_calls"], s["tokens_in"], s["tokens_out"])
+        if tracker.stop_requested:
+            _close_and_discard()
+            return
 
-    signal = graph.process_signal(last_chunk.get("final_trade_decision", ""))
+        stream = graph.graph.stream(init_state, **args)
+        while True:
+            tracker.wait_if_paused()
+            if tracker.stop_requested:
+                _close_and_discard()
+                return
+            try:
+                chunk = next(stream)
+            except StopIteration:
+                break
 
-    graph.ticker = ticker
-    graph._log_state(trade_date, last_chunk)
+            if tracker.stop_requested:
+                _close_and_discard()
+                return
 
-    tracker.mark_complete(last_chunk, signal)
+            last_chunk = chunk
+            _detect_completed_stages(chunk, tracker)
+            _infer_active_stage(tracker)
+            record_incomplete_task(
+                ticker,
+                trade_date,
+                status="paused" if tracker.is_paused else "running",
+                completed_stages=tracker.completed_stages,
+            )
+
+            s = stats.get_stats()
+            tracker.update_stats(s["llm_calls"], s["tool_calls"], s["tokens_in"], s["tokens_out"])
+
+        if tracker.stop_requested:
+            _close_and_discard()
+            return
+
+        if not last_chunk:
+            raise RuntimeError("分析没有返回任何结果，请清理断点后重试。")
+
+        signal = graph.finalize_graph_run(ticker, trade_date, last_chunk)
+        if tracker.stop_requested:
+            _close_and_discard()
+            return
+
+        tracker.mark_complete(last_chunk, signal)
+        clear_incomplete_task(ticker, trade_date)
+    finally:
+        graph.close_graph_run()
 
 
 def run_analysis_in_thread(
@@ -112,11 +170,31 @@ def run_analysis_in_thread(
     tracker.trade_date = trade_date
     tracker.is_running = True
     tracker.mark_stage_active("market")
+    record_incomplete_task(
+        ticker,
+        trade_date,
+        status="running",
+        completed_stages=tracker.completed_stages,
+    )
 
     def _target() -> None:
         try:
             _run(ticker, trade_date, config, tracker)
         except Exception as exc:
+            if tracker.stop_requested:
+                try:
+                    _discard_stopped_run(ticker, trade_date, config, tracker)
+                except Exception:
+                    traceback.print_exc()
+                return
+            traceback.print_exc()
+            record_incomplete_task(
+                ticker,
+                trade_date,
+                status="error",
+                error=str(exc),
+                completed_stages=tracker.completed_stages,
+            )
             tracker.mark_error(str(exc))
 
     t = threading.Thread(target=_target, daemon=True)

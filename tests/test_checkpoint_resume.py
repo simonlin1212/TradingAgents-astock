@@ -5,10 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import TypedDict
+from unittest.mock import MagicMock
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 
+from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.checkpointer import (
     checkpoint_step,
     clear_checkpoint,
@@ -141,6 +143,44 @@ class TestCheckpointResume(unittest.TestCase):
 
         # Original date checkpoint still exists (untouched)
         self.assertTrue(has_checkpoint(self.tmpdir, self.ticker, self.date))
+
+    def test_trading_graph_prepare_uses_none_input_when_resuming(self):
+        """TradingAgentsGraph must resume with None input, not a fresh state."""
+        global _should_crash
+        builder = _build_graph()
+        tid = thread_id(self.ticker, self.date)
+        cfg = {"configurable": {"thread_id": tid}}
+
+        _should_crash = True
+        with get_checkpointer(self.tmpdir, self.ticker) as saver:
+            graph = builder.compile(checkpointer=saver)
+            with self.assertRaises(RuntimeError):
+                graph.invoke({"count": 0}, config=cfg)
+
+        fake_graph = MagicMock()
+        fake_graph.config = {
+            "checkpoint_enabled": True,
+            "data_cache_dir": self.tmpdir,
+        }
+        fake_graph.workflow = builder
+        fake_graph._checkpointer_ctx = None
+        fake_graph.propagator.get_graph_args.return_value = {
+            "stream_mode": "values",
+            "config": {"recursion_limit": 100},
+        }
+
+        init_state, args, step = TradingAgentsGraph.prepare_graph_run(
+            fake_graph,
+            self.ticker,
+            self.date,
+        )
+
+        self.assertIsNone(init_state)
+        self.assertEqual(step, 1)
+        self.assertEqual(args["config"]["configurable"]["thread_id"], tid)
+        fake_graph.propagator.create_initial_state.assert_not_called()
+
+        TradingAgentsGraph.close_graph_run(fake_graph)
 
 
 if __name__ == "__main__":
