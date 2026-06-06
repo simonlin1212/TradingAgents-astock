@@ -21,7 +21,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # CJK fonts so PDF export (fpdf2) can render Chinese reports inside the container
 # (issue #48 — the slim image ships no CJK font, so _find_cjk_font() returns None).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && apt-get install -y --no-install-recommends fonts-wqy-microhei fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home appuser
