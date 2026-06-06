@@ -11,6 +11,8 @@ from typing import Any
 import fpdf as _fpdf_mod
 from fpdf import FPDF
 
+from web.stock_display import normalize_stock_mentions, stock_display_label
+
 
 # fpdf2 (maintained fork) and the abandoned pyfpdf 1.x BOTH import as `fpdf`, and
 # installing both leaves whichever was installed last on disk. pyfpdf 1.x encodes
@@ -152,9 +154,16 @@ _REPORT_SECTIONS = [
 
 
 class _ReportPDF(FPDF):
-    def __init__(self, ticker: str, trade_date: str, signal: str) -> None:
+    def __init__(
+        self,
+        ticker: str,
+        trade_date: str,
+        signal: str,
+        final_state: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__()
         self.ticker = ticker
+        self.ticker_label = stock_display_label(ticker, final_state)
         self.trade_date = trade_date
         self.signal = signal
         font_path = _find_cjk_font()
@@ -173,7 +182,7 @@ class _ReportPDF(FPDF):
     def header(self) -> None:
         self._use_font("", 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 6, f"A股多Agent投研分析  |  {self.ticker}  |  {self.trade_date}", align="C")
+        self.cell(0, 6, f"A股多Agent投研分析  |  {self.ticker_label}  |  {self.trade_date}", align="C")
         self.ln(8)
         self.set_draw_color(60, 60, 60)
         self.line(10, self.get_y(), self.w - 10, self.get_y())
@@ -200,7 +209,7 @@ class _ReportPDF(FPDF):
 
         self._use_font("B", 36)
         self.set_text_color(30, 30, 30)
-        self.cell(0, 18, self.ticker, align="C")
+        self.cell(0, 18, self.ticker_label, align="C")
         self.ln(16)
 
         self._use_font("", 14)
@@ -336,7 +345,10 @@ class _ReportPDF(FPDF):
             i += 1
 
 
-def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
+def _collect_sections(
+    final_state: dict[str, Any],
+    ticker: str | None = None,
+) -> list[tuple[str, str]]:
     """Assemble the (title, content) report sections shared by PDF & Markdown.
 
     Keeps both export formats in sync from a single source of truth.
@@ -346,7 +358,10 @@ def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
     for key, title in _REPORT_SECTIONS:
         content = final_state.get(key, "")
         if content:
-            sections.append((title, _strip_think(str(content))))
+            text = _strip_think(str(content))
+            if ticker:
+                text = normalize_stock_mentions(text, ticker, final_state)
+            sections.append((title, text))
 
     debate = final_state.get("investment_debate_state")
     if debate and isinstance(debate, dict):
@@ -358,15 +373,24 @@ def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
         if debate.get("judge_decision"):
             parts.append(f"\n=== 研究经理决策 ===\n{debate['judge_decision']}")
         if parts:
-            sections.append(("多空辩论", _strip_think("\n".join(parts))))
+            text = _strip_think("\n".join(parts))
+            if ticker:
+                text = normalize_stock_mentions(text, ticker, final_state)
+            sections.append(("多空辩论", text))
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
-        sections.append(("交易员决策", _strip_think(str(trader_decision))))
+        text = _strip_think(str(trader_decision))
+        if ticker:
+            text = normalize_stock_mentions(text, ticker, final_state)
+        sections.append(("交易员决策", text))
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        sections.append(("最终投资建议", _strip_think(str(inv_plan))))
+        text = _strip_think(str(inv_plan))
+        if ticker:
+            text = normalize_stock_mentions(text, ticker, final_state)
+        sections.append(("最终投资建议", text))
 
     risk = final_state.get("risk_debate_state")
     if risk and isinstance(risk, dict):
@@ -379,11 +403,17 @@ def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
         if risk.get("judge_decision"):
             parts.append(f"\n=== 风控决策 ===\n{risk['judge_decision']}")
         if parts:
-            sections.append(("风控评估", _strip_think("\n".join(parts))))
+            text = _strip_think("\n".join(parts))
+            if ticker:
+                text = normalize_stock_mentions(text, ticker, final_state)
+            sections.append(("风控评估", text))
 
     final_decision = final_state.get("final_trade_decision", "")
     if final_decision:
-        sections.append(("最终决策", _strip_think(str(final_decision))))
+        text = _strip_think(str(final_decision))
+        if ticker:
+            text = normalize_stock_mentions(text, ticker, final_state)
+        sections.append(("最终决策", text))
 
     return sections
 
@@ -396,12 +426,12 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
     to Markdown export.
     """
     _ensure_fpdf2()
-    pdf = _ReportPDF(ticker, trade_date, signal)
+    pdf = _ReportPDF(ticker, trade_date, signal, final_state)
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
 
     pdf.add_cover()
-    for title, content in _collect_sections(final_state):
+    for title, content in _collect_sections(final_state, ticker):
         pdf.add_section(title, content)
 
     return bytes(pdf.output())
@@ -413,10 +443,11 @@ def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str,
     This is the bulletproof alternative to PDF when the system lacks a CJK
     font (common on minimal Linux/Windows installs).
     """
+    ticker_label = stock_display_label(ticker, final_state)
     out = [
         "# A股多Agent投研分析报告",
         "",
-        f"- **股票代码**：{ticker}",
+        f"- **股票代码**：{ticker_label}",
         f"- **分析日期**：{trade_date}",
         f"- **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",
         f"- **交易信号**：**{signal.upper()}**",
@@ -428,7 +459,7 @@ def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str,
         "---",
         "",
     ]
-    for title, content in _collect_sections(final_state):
+    for title, content in _collect_sections(final_state, ticker):
         out.append(f"## {title}")
         out.append("")
         out.append(content)

@@ -7,6 +7,7 @@ import threading
 from typing import Any
 
 from web.progress import PIPELINE_STAGES, ProgressTracker
+from web.stock_display import normalize_report_state_mentions, normalize_stock_mentions
 
 
 _REPORT_KEY_TO_STAGE = {s["report_key"]: s["id"] for s in PIPELINE_STAGES}
@@ -31,31 +32,34 @@ def _detect_completed_stages(
         stage_id = _REPORT_KEY_TO_STAGE[report_key]
         content = chunk.get(report_key, "")
         if content and tracker.stage_status(stage_id) != "done":
-            tracker.mark_stage_done(stage_id, _strip_think_tags(str(content)))
+            report = normalize_stock_mentions(str(content), tracker.ticker, chunk)
+            tracker.mark_stage_done(stage_id, _strip_think_tags(report))
 
     dqs = chunk.get("data_quality_summary", "")
     if dqs and tracker.stage_status("quality_gate") != "done":
-        tracker.mark_stage_done("quality_gate", str(dqs))
+        tracker.mark_stage_done("quality_gate", normalize_stock_mentions(str(dqs), tracker.ticker, chunk))
 
     debate = chunk.get("investment_debate_state")
     if debate and isinstance(debate, dict):
         judge = debate.get("judge_decision", "")
         if judge and tracker.stage_status("debate") != "done":
-            tracker.mark_stage_done("debate", str(judge))
+            tracker.mark_stage_done("debate", normalize_stock_mentions(str(judge), tracker.ticker, chunk))
 
     trader_plan = chunk.get("trader_investment_plan", "")
     if trader_plan and tracker.stage_status("trader") != "done":
-        tracker.mark_stage_done("trader", _strip_think_tags(str(trader_plan)))
+        report = normalize_stock_mentions(str(trader_plan), tracker.ticker, chunk)
+        tracker.mark_stage_done("trader", _strip_think_tags(report))
 
     risk = chunk.get("risk_debate_state")
     if risk and isinstance(risk, dict):
         risk_judge = risk.get("judge_decision", "")
         if risk_judge and tracker.stage_status("risk") != "done":
-            tracker.mark_stage_done("risk", str(risk_judge))
+            tracker.mark_stage_done("risk", normalize_stock_mentions(str(risk_judge), tracker.ticker, chunk))
 
     final = chunk.get("final_trade_decision", "")
     if final and tracker.stage_status("pm") != "done":
-        tracker.mark_stage_done("pm", _strip_think_tags(str(final)))
+        report = normalize_stock_mentions(str(final), tracker.ticker, chunk)
+        tracker.mark_stage_done("pm", _strip_think_tags(report))
 
 
 def _infer_active_stage(tracker: ProgressTracker) -> None:
@@ -95,6 +99,7 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
 
     signal = graph.process_signal(last_chunk.get("final_trade_decision", ""))
 
+    normalize_report_state_mentions(last_chunk, ticker)
     graph.ticker = ticker
     graph._log_state(trade_date, last_chunk)
 
