@@ -346,6 +346,68 @@ def _sina_kline_fallback(code: str, start_date: str = None, end_date: str = None
     return df
 
 
+def _last_ohlcv_date(df: pd.DataFrame) -> pd.Timestamp | None:
+    """Return the latest OHLCV Date in a normalized dataframe."""
+    if df is None or df.empty or "Date" not in df.columns:
+        return None
+    dates = pd.to_datetime(df["Date"], errors="coerce")
+    if dates.dropna().empty:
+        return None
+    return dates.max().normalize()
+
+
+def _normalize_ohlcv_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize OHLCV Date values to daily granularity."""
+    if df is None or df.empty or "Date" not in df.columns:
+        return df
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.normalize()
+    return df.dropna(subset=["Date"])
+
+
+def _needs_sina_supplement(df: pd.DataFrame, target_date: str | None) -> bool:
+    """True when mootdx/cache data is older than the requested cutoff date."""
+    if not target_date:
+        return False
+    last_date = _last_ohlcv_date(df)
+    if last_date is None:
+        return True
+    target = pd.to_datetime(target_date).normalize()
+    return last_date < target
+
+
+def _merge_ohlcv(primary: pd.DataFrame, supplement: pd.DataFrame) -> pd.DataFrame:
+    """Merge OHLCV frames, preferring supplement rows on duplicate dates."""
+    frames = [frame for frame in (primary, supplement) if frame is not None and not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=["Date", "Open", "High", "Low", "Close", "Volume"])
+    combined = pd.concat(frames, ignore_index=True)
+    combined = _normalize_ohlcv_dates(combined)
+    combined = combined.drop_duplicates(subset=["Date"], keep="last")
+    combined = combined.sort_values("Date").reset_index(drop=True)
+    return combined
+
+
+def _supplement_stale_ohlcv_with_sina(
+    code: str,
+    df: pd.DataFrame,
+    target_date: str | None,
+    start_date: str | None = None,
+) -> tuple[pd.DataFrame, bool]:
+    """Use Sina daily K-line to fill dates missing from mootdx/cache data."""
+    if not _needs_sina_supplement(df, target_date):
+        return df, False
+    try:
+        sina_df = _sina_kline_fallback(code, start_date, target_date)
+    except Exception as e:
+        logger.warning("sina K-line supplement failed for %s: %s", code, e)
+        return df, False
+    if sina_df.empty:
+        return df, False
+    merged = _merge_ohlcv(df, sina_df)
+    return merged, _last_ohlcv_date(merged) != _last_ohlcv_date(df)
+
+
 # ---------------------------------------------------------------------------
 # OHLCV loading with cache (mootdx -> CSV)
 # ---------------------------------------------------------------------------
@@ -371,7 +433,12 @@ def _load_ohlcv_astock(symbol: str, curr_date: str) -> pd.DataFrame:
         mtime = datetime.fromtimestamp(os.path.getmtime(cache_file))
         if mtime.date() == datetime.now().date():
             data = pd.read_csv(cache_file, on_bad_lines="skip", encoding="utf-8")
-            data["Date"] = pd.to_datetime(data["Date"])
+            data = _normalize_ohlcv_dates(data)
+            data, supplemented = _supplement_stale_ohlcv_with_sina(
+                code, data, curr_date, start_date=None
+            )
+            if supplemented:
+                data.to_csv(cache_file, index=False, encoding="utf-8")
             cutoff = pd.to_datetime(curr_date)
             return data[data["Date"] <= cutoff]
 
@@ -397,7 +464,7 @@ def _load_ohlcv_astock(symbol: str, curr_date: str) -> pd.DataFrame:
         }
         df = df.rename(columns=rename_map)
         df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
-        df["Date"] = pd.to_datetime(df["Date"])
+        df = _normalize_ohlcv_dates(df)
     except Exception as e:
         logger.warning("mootdx OHLCV failed for %s: %s, trying sina HTTP fallback", code, e)
         # Fallback: Sina direct HTTP API
@@ -407,6 +474,8 @@ def _load_ohlcv_astock(symbol: str, curr_date: str) -> pd.DataFrame:
                 raise ValueError(f"No OHLCV data from sina for {code}")
         except Exception:
             raise ValueError(f"No OHLCV data from mootdx/sina for {code}")
+
+    df, _ = _supplement_stale_ohlcv_with_sina(code, df, curr_date, start_date=None)
 
     # Cache to disk
     df.to_csv(cache_file, index=False, encoding="utf-8")
@@ -457,7 +526,7 @@ def get_stock_data(
                 "amount": "Amount",
             }
         )
-        df["Date"] = pd.to_datetime(df["Date"])
+        df = _normalize_ohlcv_dates(df)
 
     except Exception as e:
         logger.warning("mootdx K-line failed for %s: %s, trying sina HTTP fallback", code, e)
@@ -469,6 +538,10 @@ def get_stock_data(
             data_source = "sina HTTP (fallback)"
         except Exception:
             return "K线数据获取失败：mootdx和新浪备用源均不可用，请检查网络连接"
+
+    df, supplemented = _supplement_stale_ohlcv_with_sina(code, df, end_date, start_date)
+    if supplemented:
+        data_source = f"{data_source} + sina HTTP supplement"
 
     # Filter by date range
     start_dt = pd.to_datetime(start_date)
