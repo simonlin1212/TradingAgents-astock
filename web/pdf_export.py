@@ -236,6 +236,116 @@ class _ReportPDF(FPDF):
         cleaned = _strip_think(content)
         self._render_markdown(cleaned)
 
+    @staticmethod
+    def _is_md_table_separator_row(row: str) -> bool:
+        """Return True if this markdown row is a separator like |---|:---:|."""
+        stripped = row.strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            return False
+        inner = stripped.strip("|")
+        parts = [p.strip() for p in inner.split("|")]
+        if not parts:
+            return False
+        return all(re.fullmatch(r":?-{3,}:?", p or "") is not None for p in parts)
+
+    @staticmethod
+    def _parse_md_table_row(row: str) -> list[str]:
+        """Parse one markdown table row into stripped cell values."""
+        inner = row.strip().strip("|")
+        return [_strip_md_inline(c.strip()) for c in inner.split("|")]
+
+    def _wrap_text_by_width(self, text: str, max_width: float) -> list[str]:
+        """Wrap text to fit max_width (character-based, CJK-friendly)."""
+        text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not text:
+            return [""]
+
+        wrapped: list[str] = []
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                wrapped.append("")
+                continue
+
+            current = ""
+            for ch in line:
+                candidate = current + ch
+                if current and self.get_string_width(candidate) > max_width:
+                    wrapped.append(current)
+                    current = ch
+                else:
+                    current = candidate
+            wrapped.append(current if current else "")
+        return wrapped or [""]
+
+    def _render_table(self, table_lines: list[str]) -> None:
+        """Render a markdown table using fixed grid cells."""
+        rows = [
+            self._parse_md_table_row(ln)
+            for ln in table_lines
+            if not self._is_md_table_separator_row(ln)
+        ]
+        if not rows:
+            return
+
+        col_count = max(len(r) for r in rows)
+        if col_count <= 0:
+            return
+        rows = [r + [""] * (col_count - len(r)) for r in rows]
+
+        table_width = self.w - self.l_margin - self.r_margin
+        col_width = table_width / col_count
+        pad_x = 1.2
+        pad_y = 0.9
+        line_h = 4.6
+
+        # Header style (first row).
+        header_fill = (245, 245, 245)
+        border_color = (190, 190, 190)
+        text_color = (55, 55, 55)
+
+        self.set_draw_color(*border_color)
+        self.set_text_color(*text_color)
+
+        for row_idx, row in enumerate(rows):
+            wrapped_cells: list[list[str]] = []
+            max_lines = 1
+            for cell in row:
+                lines = self._wrap_text_by_width(cell, max(1.0, col_width - 2 * pad_x))
+                wrapped_cells.append(lines)
+                if len(lines) > max_lines:
+                    max_lines = len(lines)
+            row_h = max(6.0, 2 * pad_y + max_lines * line_h)
+
+            # Auto page-break for full row before drawing.
+            if self.get_y() + row_h > self.page_break_trigger:
+                self.add_page()
+
+            y0 = self.get_y()
+            x0 = self.l_margin
+
+            for col_idx, lines in enumerate(wrapped_cells):
+                cell_x = x0 + col_idx * col_width
+                if row_idx == 0:
+                    self.set_fill_color(*header_fill)
+                    self.rect(cell_x, y0, col_width, row_h, style="DF")
+                else:
+                    self.rect(cell_x, y0, col_width, row_h)
+
+                self.set_xy(cell_x + pad_x, y0 + pad_y)
+                self._use_font("B" if row_idx == 0 else "", 8.8 if row_idx == 0 else 8.4)
+                self.multi_cell(
+                    max(1.0, col_width - 2 * pad_x),
+                    line_h,
+                    "\n".join(lines),
+                    border=0,
+                    align="L",
+                )
+
+            self.set_xy(self.l_margin, y0 + row_h)
+
+        self.ln(2)
+
     def _render_markdown(self, text: str) -> None:
         """Render markdown-formatted text with basic styling."""
         lines = text.split("\n")
@@ -299,19 +409,17 @@ class _ReportPDF(FPDF):
                 i += 1
                 continue
 
-            # Table rows (|col|col|) → render as plain text with spacing
+            # Markdown table block (|col|col|) → render as fixed grid
             if stripped.startswith("|") and stripped.endswith("|"):
-                # Skip separator rows like |---|---|
-                if re.match(r"^\|[-:\s|]+\|$", stripped):
-                    i += 1
-                    continue
-                self._use_font("", 9)
-                self.set_text_color(60, 60, 60)
-                cells = [c.strip() for c in stripped.strip("|").split("|")]
-                row_text = "    ".join(_strip_md_inline(c) for c in cells)
-                self.set_x(self.l_margin)
-                self.multi_cell(0, 5, row_text, wrapmode="CHAR")
-                i += 1
+                table_lines = []
+                while i < len(lines):
+                    row = lines[i].strip()
+                    if row.startswith("|") and row.endswith("|"):
+                        table_lines.append(row)
+                        i += 1
+                    else:
+                        break
+                self._render_table(table_lines)
                 continue
 
             # Regular paragraph — collect consecutive non-special lines
