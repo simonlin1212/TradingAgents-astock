@@ -37,6 +37,7 @@ class ProgressTracker:
     is_running: bool = False
     is_complete: bool = False
     error: Optional[str] = None
+    error_traceback: Optional[str] = None
 
     current_stage: str = ""
     completed_stages: list[str] = field(default_factory=list)
@@ -71,9 +72,10 @@ class ProgressTracker:
             self.is_running = False
             self.is_complete = True
 
-    def mark_error(self, err: str) -> None:
+    def mark_error(self, err: str, traceback_text: str | None = None) -> None:
         with self._lock:
             self.error = err
+            self.error_traceback = traceback_text
             self.is_running = False
 
     def update_stats(self, llm: int, tool: int, tok_in: int, tok_out: int) -> None:

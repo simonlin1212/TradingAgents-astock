@@ -152,9 +152,10 @@ _REPORT_SECTIONS = [
 
 
 class _ReportPDF(FPDF):
-    def __init__(self, ticker: str, trade_date: str, signal: str) -> None:
+    def __init__(self, ticker: str, stock_name: str, trade_date: str, signal: str) -> None:
         super().__init__()
         self.ticker = ticker
+        self.stock_name = stock_name or ticker
         self.trade_date = trade_date
         self.signal = signal
         font_path = _find_cjk_font()
@@ -173,7 +174,12 @@ class _ReportPDF(FPDF):
     def header(self) -> None:
         self._use_font("", 8)
         self.set_text_color(150, 150, 150)
-        self.cell(0, 6, f"A股多Agent投研分析  |  {self.ticker}  |  {self.trade_date}", align="C")
+        self.cell(
+            0,
+            6,
+            f"A股多Agent投研分析  |  {self.stock_name}({self.ticker})  |  {self.trade_date}",
+            align="C",
+        )
         self.ln(8)
         self.set_draw_color(60, 60, 60)
         self.line(10, self.get_y(), self.w - 10, self.get_y())
@@ -200,7 +206,7 @@ class _ReportPDF(FPDF):
 
         self._use_font("B", 36)
         self.set_text_color(30, 30, 30)
-        self.cell(0, 18, self.ticker, align="C")
+        self.cell(0, 18, f"{self.stock_name} ({self.ticker})", align="C")
         self.ln(16)
 
         self._use_font("", 14)
@@ -496,7 +502,13 @@ def _collect_sections(final_state: dict[str, Any]) -> list[tuple[str, str]]:
     return sections
 
 
-def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> bytes:
+def generate_pdf(
+    final_state: dict[str, Any],
+    ticker: str,
+    trade_date: str,
+    signal: str,
+    stock_name: str = "",
+) -> bytes:
     """Generate a PDF report and return it as bytes.
 
     Raises RuntimeError if the wrong fpdf library is installed (issue #54) or no
@@ -504,7 +516,7 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
     to Markdown export.
     """
     _ensure_fpdf2()
-    pdf = _ReportPDF(ticker, trade_date, signal)
+    pdf = _ReportPDF(ticker, stock_name, trade_date, signal)
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
 
@@ -515,15 +527,23 @@ def generate_pdf(final_state: dict[str, Any], ticker: str, trade_date: str, sign
     return bytes(pdf.output())
 
 
-def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str, signal: str) -> str:
+def generate_markdown(
+    final_state: dict[str, Any],
+    ticker: str,
+    trade_date: str,
+    signal: str,
+    stock_name: str = "",
+) -> str:
     """Generate a Markdown report. Font-free and always works — the safe export.
 
     This is the bulletproof alternative to PDF when the system lacks a CJK
     font (common on minimal Linux/Windows installs).
     """
+    title_name = stock_name or ticker
     out = [
-        "# A股多Agent投研分析报告",
+        f"# A股多Agent投研分析报告：{title_name} ({ticker})",
         "",
+        f"- **股票名称**：{title_name}",
         f"- **股票代码**：{ticker}",
         f"- **分析日期**：{trade_date}",
         f"- **生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M')}",

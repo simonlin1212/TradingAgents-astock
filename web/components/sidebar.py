@@ -24,6 +24,7 @@ _PROVIDERS: list[tuple[str, str]] = [
 
 _PROVIDER_DISPLAY = [name for name, _ in _PROVIDERS]
 _PROVIDER_KEYS = [key for _, key in _PROVIDERS]
+_DEFAULT_PROVIDER_KEY = "deepseek"
 
 
 def _resolve_user_input(raw: str) -> tuple[str, str | None]:
@@ -44,9 +45,15 @@ def _resolve_user_input(raw: str) -> tuple[str, str | None]:
 def _render_llm_config() -> None:
     """Render LLM provider and model selection controls."""
 
+    default_provider_idx = (
+        _PROVIDER_KEYS.index(_DEFAULT_PROVIDER_KEY)
+        if _DEFAULT_PROVIDER_KEY in _PROVIDER_KEYS
+        else 0
+    )
     provider_idx = st.selectbox(
         "LLM 供应商",
         range(len(_PROVIDERS)),
+        index=default_provider_idx,
         format_func=lambda i: _PROVIDER_DISPLAY[i],
         key="llm_provider_idx",
         help="选择你配置了 API Key 的供应商",
@@ -129,6 +136,26 @@ def render_sidebar() -> None:
         key="input_ticker",
         help="输入6位A股代码或中文股票全称",
     )
+    has_chinese = any("一" <= ch <= "鿿" for ch in (ticker or ""))
+    selected_candidate_code: str | None = None
+
+    if ticker and has_chinese:
+        from tradingagents.dataflows.a_stock import suggest_ticker_candidates
+
+        candidates = suggest_ticker_candidates(ticker, limit=10)
+        if candidates:
+            options = [f"{name} ({code})" for name, code in candidates]
+            selected_label = st.selectbox(
+                "候选股票（可选）",
+                options,
+                index=0,
+                key="ticker_candidate_label",
+                help="输入中文名时可直接选择候选，避免名称解析失败",
+            )
+            label_to_code = {f"{name} ({code})": code for name, code in candidates}
+            selected_candidate_code = label_to_code.get(selected_label)
+        else:
+            st.caption("未找到名称候选，建议输入更完整名称或直接输入6位代码")
 
     trade_date = st.date_input(
         "分析日期",
@@ -148,11 +175,16 @@ def render_sidebar() -> None:
         disabled=is_busy or not ticker,
         type="primary",
     ):
-        resolved_code, err = _resolve_user_input(ticker)
+        resolved_code = selected_candidate_code or ""
+        err = None
+        if not resolved_code:
+            resolved_code, err = _resolve_user_input(ticker)
         if err:
             st.error(f"❌ {err}")
         else:
-            if resolved_code != ticker.strip():
+            if selected_candidate_code:
+                st.success(f"✅ 已选择候选: {resolved_code}")
+            elif resolved_code != ticker.strip():
                 st.success(f"✅ {ticker.strip()} → {resolved_code}")
             st.session_state["start_analysis"] = {
                 "ticker": resolved_code,
@@ -169,9 +201,11 @@ def render_sidebar() -> None:
         return
 
     for entry in history[:20]:
-        t, d = entry["ticker"], entry["date"]
-        label = f"{t}  ·  {d}"
-        if st.button(label, key=f"hist_{t}_{d}", use_container_width=True):
+        t = entry["ticker"]
+        name = entry.get("stock_name", t)
+        ts = entry.get("timestamp", entry.get("date", ""))
+        label = f"{name} ({t})  ·  {ts}"
+        if st.button(label, key=f"hist_{entry['path']}", use_container_width=True):
             st.session_state["viewing_history"] = entry["path"]
             st.session_state["start_analysis"] = None
 
