@@ -33,6 +33,7 @@ import requests as _requests
 from .utils import safe_ticker_component
 
 logger = logging.getLogger(__name__)
+_A_STOCK_CODE_RE = _re.compile(r"^[034689]\d{5}$")
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ def _build_name_code_map() -> tuple[dict[str, str], dict[str, str]]:
         for _, row in stocks.iterrows():
             code = str(row["code"]).strip()
             name = str(row["name"]).strip()
-            if not _re.match(r"^[036]\d{5}$", code):
+            if not _A_STOCK_CODE_RE.match(code):
                 continue
             clean_name = name.replace(" ", "").replace("　", "")
             n2c[clean_name] = code
@@ -104,6 +105,150 @@ def _build_name_code_map() -> tuple[dict[str, str], dict[str, str]]:
     _code_to_name = c2n
     logger.info("Built stock name-code map: %d entries", len(n2c))
     return _name_to_code, _code_to_name
+
+
+def _search_stock_candidates_eastmoney(keyword: str, page_size: int = 10) -> list[tuple[str, str]]:
+    """Search A-stock candidates by Chinese name via Eastmoney search API."""
+    url = "https://search-api-web.eastmoney.com/search/jsonp"
+    inner_param = {
+        "uid": "",
+        "keyword": keyword,
+        "type": ["stock"],
+        "client": "web",
+        "clientType": "web",
+        "clientVersion": "curr",
+        "param": {
+            "stock": {
+                "searchScope": "default",
+                "sort": "default",
+                "pageIndex": 1,
+                "pageSize": page_size,
+                "preTag": "",
+                "postTag": "",
+            }
+        },
+    }
+    params = {
+        "cb": "callback",
+        "param": _json.dumps(inner_param, ensure_ascii=False),
+        "_": "1",
+    }
+    headers = {"Referer": "https://so.eastmoney.com/", "User-Agent": _UA}
+
+    try:
+        resp = _em_get(url, params=params, headers=headers, timeout=12)
+        resp.raise_for_status()
+        text = resp.text.strip()
+        if "(" in text and ")" in text:
+            text = text[text.index("(") + 1 : text.rindex(")")]
+        data = _json.loads(text)
+
+        result = data.get("result", {})
+        rows = result.get("stock", []) if isinstance(result, dict) else []
+
+        dedup: dict[str, str] = {}
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            code = str(
+                item.get("code")
+                or item.get("securityCode")
+                or item.get("scode")
+                or ""
+            ).strip()
+            if not code:
+                quote_id = str(item.get("quoteId") or "")
+                m = _re.search(r"(\d{6})$", quote_id)
+                if m:
+                    code = m.group(1)
+            if not _A_STOCK_CODE_RE.match(code):
+                continue
+
+            name = str(
+                item.get("name")
+                or item.get("securityShortName")
+                or item.get("securityName")
+                or item.get("shortname")
+                or ""
+            ).strip()
+            if not name:
+                continue
+            clean_name = name.replace(" ", "").replace("　", "")
+            dedup[clean_name] = code
+
+        return list(dedup.items())
+    except Exception as e:
+        logger.warning("Eastmoney name search failed for '%s': %s", keyword, e)
+        return []
+
+
+def suggest_ticker_candidates(user_input: str, limit: int = 10) -> list[tuple[str, str]]:
+    """Return candidate (name, code) pairs for Chinese stock-name input.
+
+    Search order:
+    1. Local mootdx name map (fast, no HTTP)
+    2. Eastmoney search fallback (works when mootdx is unavailable)
+    """
+    s = (user_input or "").strip()
+    if not s:
+        return []
+    has_chinese = any("一" <= ch <= "鿿" for ch in s)
+    if not has_chinese:
+        return []
+
+    clean = s.replace(" ", "").replace("　", "")
+    candidates: list[tuple[str, str]] = []
+    seen_codes: set[str] = set()
+
+    try:
+        n2c, _ = _build_name_code_map()
+        ranked: list[tuple[str, str]] = []
+        if clean in n2c:
+            ranked.append((clean, n2c[clean]))
+        for name, code in n2c.items():
+            if name == clean:
+                continue
+            if clean in name or name in clean:
+                ranked.append((name, code))
+        for name, code in ranked:
+            if code in seen_codes:
+                continue
+            candidates.append((name, code))
+            seen_codes.add(code)
+            if len(candidates) >= limit:
+                return candidates
+    except Exception as e:
+        logger.warning("mootdx candidate search failed for '%s': %s", clean, e)
+
+    for name, code in _search_stock_candidates_eastmoney(clean, page_size=max(10, limit)):
+        if code in seen_codes:
+            continue
+        candidates.append((name, code))
+        seen_codes.add(code)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+def get_stock_name(code_or_symbol: str) -> str:
+    """Resolve a 6-digit code to Chinese stock name when possible."""
+    code = _normalize_ticker(code_or_symbol)
+    try:
+        _, c2n = _build_name_code_map()
+        if c2n and code in c2n:
+            return c2n[code]
+    except Exception as e:
+        logger.warning("name lookup via mootdx map failed for %s: %s", code, e)
+
+    try:
+        q = _tencent_quote([code]).get(code, {})
+        name = str(q.get("name", "")).strip()
+        if name:
+            return name
+    except Exception as e:
+        logger.warning("name lookup via tencent quote failed for %s: %s", code, e)
+
+    return ""
 
 
 def resolve_ticker(user_input: str) -> str:
@@ -123,19 +268,40 @@ def resolve_ticker(user_input: str) -> str:
         return _normalize_ticker(s)
 
     clean = s.replace(" ", "").replace("　", "")
-    n2c, _ = _build_name_code_map()
+    n2c: dict[str, str] = {}
+    try:
+        n2c, _ = _build_name_code_map()
+    except Exception as e:
+        logger.warning("mootdx name-code map unavailable; fallback to Eastmoney: %s", e)
 
     if clean in n2c:
         return n2c[clean]
 
-    matches = {name: code for name, code in n2c.items() if clean in name}
+    matches = {name: code for name, code in n2c.items() if clean in name or name in clean}
     if len(matches) == 1:
         return next(iter(matches.values()))
     if len(matches) > 1:
         examples = ", ".join(f"{n}({c})" for n, c in list(matches.items())[:5])
-        raise ValueError(f"'{s}' 匹配到多只股票: {examples}，请输入完整名称或代码")
+        raise ValueError(
+            f"'{s}' 匹配到多只股票: {examples}，请输入更完整名称或直接输入6位代码。"
+        )
 
-    raise ValueError(f"找不到股票 '{s}'，请检查名称是否正确")
+    # Fallback: query Eastmoney search API for Chinese name inputs.
+    em_candidates = _search_stock_candidates_eastmoney(clean)
+    if em_candidates:
+        for name, code in em_candidates:
+            if name == clean:
+                return code
+        if len(em_candidates) == 1:
+            return em_candidates[0][1]
+        examples = ", ".join(f"{n}({c})" for n, c in em_candidates[:5])
+        raise ValueError(
+            f"'{s}' 匹配到多只股票: {examples}，请输入更完整名称或直接输入6位代码。"
+        )
+
+    raise ValueError(
+        f"找不到股票 '{s}'。请尝试输入完整公司全称，或直接输入6位代码（如 600519）。"
+    )
 
 
 # ---------------------------------------------------------------------------

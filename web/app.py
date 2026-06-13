@@ -156,9 +156,9 @@ st.markdown(
 
 def _build_config() -> dict:
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = st.session_state.get("llm_provider", "minimax")
-    config["deep_think_llm"] = st.session_state.get("deep_think_llm", "MiniMax-M2.7")
-    config["quick_think_llm"] = st.session_state.get("quick_think_llm", "MiniMax-M2.7-highspeed")
+    config["llm_provider"] = st.session_state.get("llm_provider", "deepseek")
+    config["deep_think_llm"] = st.session_state.get("deep_think_llm", "deepseek-v4-pro")
+    config["quick_think_llm"] = st.session_state.get("quick_think_llm", "deepseek-v4-flash")
     # Optional third-party / proxy endpoint. Sidebar input wins, else .env BACKEND_URL.
     backend_url = (st.session_state.get("llm_base_url") or os.getenv("BACKEND_URL") or "").strip()
     config["backend_url"] = backend_url or None
@@ -233,6 +233,10 @@ elif tracker and tracker.is_complete:
 # State 4: Analysis errored
 elif tracker and tracker.error:
     st.error(f"分析失败: {tracker.error}")
+    traceback_text = getattr(tracker, "error_traceback", None)
+    if traceback_text:
+        with st.expander("查看错误详情（Traceback）", expanded=False):
+            st.code(traceback_text, language="python")
     if st.button("重试"):
         st.session_state.pop("tracker", None)
         st.rerun()

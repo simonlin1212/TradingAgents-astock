@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+import traceback
 from typing import Any
 
 from web.progress import PIPELINE_STAGES, ProgressTracker
@@ -117,7 +118,16 @@ def run_analysis_in_thread(
         try:
             _run(ticker, trade_date, config, tracker)
         except Exception as exc:
-            tracker.mark_error(str(exc))
+            err_msg = str(exc) or exc.__class__.__name__
+            if (
+                isinstance(exc, ValueError)
+                and "not enough values to unpack" in err_msg
+            ):
+                err_msg = (
+                    f"{err_msg}（内部返回值结构异常：某处期望拿到 2 个值，"
+                    "却拿到了空结果。请展开下方 Traceback 查看具体文件与行号）"
+                )
+            tracker.mark_error(err_msg, traceback.format_exc())
 
     t = threading.Thread(target=_target, daemon=True)
     t.start()

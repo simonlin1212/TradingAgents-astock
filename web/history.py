@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ def _results_dir() -> Path:
 def get_history() -> list[dict[str, str]]:
     """Scan saved analysis logs and return a sorted list (newest first).
 
-    Each entry: {"ticker": "300750", "date": "2026-05-12", "path": "/abs/path/...json"}
+    Each entry includes ticker/code, stock_name and minute-level timestamp.
     """
     root = _results_dir()
     if not root.exists():
@@ -28,9 +29,40 @@ def get_history() -> list[dict[str, str]]:
             continue
         date = match.group(1)
         ticker = log_file.parent.parent.name
-        entries.append({"ticker": ticker, "date": date, "path": str(log_file)})
+        stock_name = ticker
+        timestamp = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        sort_time = timestamp
+        try:
+            with open(log_file, encoding="utf-8") as f:
+                state = json.load(f)
+            stock_name = (
+                str(state.get("stock_name") or "").strip()
+                or str(state.get("company_of_interest") or "").strip()
+                or ticker
+            )
+            generated_at = str(state.get("generated_at") or "").strip()
+            if generated_at:
+                try:
+                    sort_dt = datetime.strptime(generated_at, "%Y-%m-%d %H:%M:%S")
+                    timestamp = sort_dt.strftime("%Y-%m-%d %H:%M")
+                    sort_time = sort_dt.strftime("%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    pass
+        except Exception:
+            pass
 
-    entries.sort(key=lambda e: e["date"], reverse=True)
+        entries.append(
+            {
+                "ticker": ticker,
+                "stock_name": stock_name,
+                "date": date,
+                "timestamp": timestamp,
+                "sort_time": sort_time,
+                "path": str(log_file),
+            }
+        )
+
+    entries.sort(key=lambda e: e.get("sort_time", e.get("timestamp", e["date"])), reverse=True)
     return entries
 
 

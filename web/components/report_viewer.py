@@ -43,6 +43,9 @@ def render_report(
 ) -> None:
     """Render the full analysis report."""
 
+    stock_name = str(final_state.get("stock_name") or "").strip() or ticker
+    safe_stock_name = stock_name.replace("/", "_").replace("\\", "_").strip() or ticker
+    export_basename = f"{safe_stock_name}_{trade_date}"
     color, cn_signal = _signal_style(signal)
 
     stats_html = ""
@@ -65,7 +68,7 @@ def render_report(
                 {signal.upper()}
             </div>
             <div style="font-size:1.2rem; color:#f5f1eb;">
-                {ticker} · {trade_date}
+                {stock_name} ({ticker}) · {trade_date}
             </div>
             {stats_html}
         </div>
@@ -79,21 +82,21 @@ def render_report(
     # lazily and guarded so a PDF/font failure never crashes the results page.
     col_md, col_pdf, col_spacer = st.columns([1, 1, 2])
     with col_md:
-        md_text = generate_markdown(final_state, ticker, trade_date, signal)
+        md_text = generate_markdown(final_state, ticker, trade_date, signal, stock_name=stock_name)
         st.download_button(
             "📥 下载 Markdown",
             data=md_text.encode("utf-8"),
-            file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.md",
+            file_name=f"{export_basename}.md",
             mime="text/markdown",
             use_container_width=True,
         )
     with col_pdf:
         try:
-            pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal)
+            pdf_bytes = generate_pdf(final_state, ticker, trade_date, signal, stock_name=stock_name)
             st.download_button(
                 "📄 下载 PDF",
                 data=pdf_bytes,
-                file_name=f"TradingAgents-Astock_{ticker}_{trade_date}.pdf",
+                file_name=f"{export_basename}.pdf",
                 mime="application/pdf",
                 use_container_width=True,
             )
