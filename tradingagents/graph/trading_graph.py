@@ -19,6 +19,7 @@ from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.agents.utils.memory import TradingMemoryLog
 from tradingagents.dataflows.utils import safe_ticker_component
+from tradingagents.dataflows.a_stock import get_stock_name
 from tradingagents.agents.utils.agent_states import (
     AgentState,
     InvestDebateState,
@@ -385,8 +386,16 @@ class TradingAgentsGraph:
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""
+        stock_name = ""
+        try:
+            stock_name = get_stock_name(self.ticker)
+        except Exception as e:
+            logger.warning("Could not resolve stock name for %s: %s", self.ticker, e)
+
         self.log_states_dict[str(trade_date)] = {
             "company_of_interest": final_state["company_of_interest"],
+            "stock_name": stock_name,
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "trade_date": final_state["trade_date"],
             "market_report": final_state["market_report"],
             "sentiment_report": final_state["sentiment_report"],
