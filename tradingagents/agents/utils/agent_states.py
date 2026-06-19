@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from typing_extensions import TypedDict
 from langgraph.graph import MessagesState
 
@@ -62,6 +62,11 @@ class AgentState(MessagesState):
 
     # data quality gate
     data_quality_summary: Annotated[str, "Quality gate assessment of all analyst reports (hard checks + LLM review)"]
+    missing_data_tasks: Annotated[list[dict[str, Any]], "Data tool calls that returned missing or failed data"]
+    missing_data_complete: Annotated[bool, "Whether all required data tool calls completed without known missing data"]
+    missing_data_resolved_count: Annotated[int, "Number of missing-data tasks recovered by retry"]
+    missing_data_requires_reanalysis: Annotated[bool, "Whether recovered data must be fed through a fresh full analysis"]
+    missing_data_updated_at: Annotated[float, "Unix timestamp for the missing-data snapshot"]
 
     # researcher team discussion step
     investment_debate_state: Annotated[
