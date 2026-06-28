@@ -61,6 +61,12 @@ class TestParseRating:
         for r in RATINGS_5_TIER:
             assert parse_rating(f"Rating: {r}") == r
 
+    def test_chinese_final_rating_sell(self):
+        assert parse_rating("**最终评级：** **卖出**\n理由如下。") == "Sell"
+
+    def test_chinese_final_rating_overweight(self):
+        assert parse_rating("最终评级：增持\n逐步提高仓位。") == "Overweight"
+
 
 # ---------------------------------------------------------------------------
 # SignalProcessor: thin adapter over the heuristic
