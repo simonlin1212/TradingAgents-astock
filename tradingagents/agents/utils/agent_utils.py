@@ -18,6 +18,11 @@ from tradingagents.agents.utils.news_data_tools import (
     get_insider_transactions,
     get_global_news
 )
+from tradingagents.agents.utils.kol_data_tools import (
+    get_kol_summary,
+    get_kol_hotspots,
+    get_author_score,
+)
 from tradingagents.agents.utils.signal_data_tools import (
     get_profit_forecast,
     get_hot_stocks,

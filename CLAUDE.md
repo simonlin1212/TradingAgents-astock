@@ -65,6 +65,20 @@ deepseek-v4-flash 等模型在 tool call 时可能返回中文股票名而非 6 
 - 数据层新增接口遵循 `tradingagents/dataflows/interface.py` 的 vendor 路由模式
 - Web UI 改动在 `web/` 目录，用 `streamlit run web/launch.py` 本地测试
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `simonlin1212/TradingAgents-astock`; external PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain layout with root `CONTEXT.md` and ADRs under `docs/adr/`. See `docs/agents/domain.md`.
+
 ## 相关项目
 - [a-stock-data](https://github.com/simonlin1212/a-stock-data) — A 股 MCP 数据服务（Claude Code 用的 skill）
 - 上游 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) — 原版框架

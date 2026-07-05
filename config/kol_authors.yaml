@@ -1,0 +1,9 @@
+authors:
+  - id: example_douyin_author
+    name: 示例抖音博主
+    platform: douyin
+    sec_uid: ""
+    profile_url: ""
+    style_tags: ["短线", "题材"]
+    priority: medium
+    enabled: false
