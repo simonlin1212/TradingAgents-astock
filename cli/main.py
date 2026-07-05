@@ -38,6 +38,80 @@ app = typer.Typer(
     help="TradingAgents CLI: Multi-Agents LLM Financial Trading Framework",
     add_completion=True,  # Enable shell completion
 )
+kol_app = typer.Typer(help="KOL information radar utilities")
+app.add_typer(kol_app, name="kol")
+
+
+@kol_app.command("ingest")
+def kol_ingest(
+    jsonl: Optional[Path] = typer.Option(
+        None,
+        "--jsonl",
+        help="Import normalized KOL posts from a JSONL file.",
+    ),
+    since_hours: int = typer.Option(
+        24,
+        "--since-hours",
+        help="Reserved window for source importers that support incremental fetch.",
+    ),
+):
+    """Import KOL content into SQLite and extract confirmed signals."""
+    from tradingagents.dataflows.kol.importers import load_jsonl
+    from tradingagents.dataflows.kol.service import KolRadarService
+
+    if jsonl is None:
+        raise typer.BadParameter("--jsonl is required for the current importer")
+    posts = load_jsonl(jsonl)
+    count = KolRadarService().ingest_raw_posts(posts)
+    console.print(f"[green]Imported {len(posts)} post(s), extracted {count} signal(s).[/green]")
+    console.print(f"[dim]Window hint: last {since_hours} hour(s).[/dim]")
+
+
+@kol_app.command("score")
+def kol_score(
+    trade_date: str = typer.Option(..., "--trade-date", help="Trade date in yyyy-mm-dd format."),
+):
+    """Refresh transparent first-pass KOL author scores."""
+    from tradingagents.dataflows.kol.service import KolRadarService
+
+    service = KolRadarService()
+    service.update_author_scores()
+    console.print(f"[green]KOL author scores refreshed for {trade_date}.[/green]")
+
+
+@kol_app.command("sync-obsidian")
+def kol_sync_obsidian(
+    full: bool = typer.Option(False, "--full", help="Rebuild the full Obsidian projection."),
+):
+    """Generate Obsidian notes from the KOL SQLite truth source."""
+    from tradingagents.dataflows.kol.obsidian_sync import ObsidianSync
+    from tradingagents.dataflows.kol.service import KolRadarService
+
+    sync = ObsidianSync(KolRadarService().storage)
+    sync.sync_full()
+    mode = "full" if full else "incremental-compatible"
+    console.print(f"[green]Obsidian KOL projection synced ({mode}).[/green]")
+
+
+@kol_app.command("daily-run")
+def kol_daily_run(
+    phase: str = typer.Option(
+        ...,
+        "--phase",
+        help="One of: premarket, intraday, postmarket.",
+    ),
+):
+    """Run the KOL daily maintenance phase."""
+    if phase not in {"premarket", "intraday", "postmarket"}:
+        raise typer.BadParameter("phase must be premarket, intraday, or postmarket")
+    from tradingagents.dataflows.kol.obsidian_sync import ObsidianSync
+    from tradingagents.dataflows.kol.service import KolRadarService
+
+    service = KolRadarService()
+    if phase in {"premarket", "postmarket"}:
+        service.update_author_scores()
+    ObsidianSync(service.storage).sync_full()
+    console.print(f"[green]KOL daily phase completed: {phase}.[/green]")
 
 
 # Create a deque to store recent messages with a maximum length
