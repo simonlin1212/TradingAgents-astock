@@ -56,6 +56,12 @@ def test_completed_history_hides_incomplete_task(tmp_path, monkeypatch):
     assert history.get_incomplete_history() == []
 
 
+def test_extract_signal_supports_chinese_final_rating():
+    state = {"final_trade_decision": "**最终评级：** **卖出**\n风险收益不匹配。"}
+
+    assert history.extract_signal(state) == "Sell"
+
+
 def test_incomplete_task_writes_are_thread_safe(tmp_path, monkeypatch):
     index = tmp_path / "incomplete_tasks.json"
     logs = tmp_path / "logs"
