@@ -69,28 +69,28 @@
 ## 架构概览
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    7 Analyst 研报生成                      │
-│  Market → Social → News → Fundamentals                   │
-│  → Policy → Hot Money → Lockup                           │
-│         （每个 Analyst 带工具循环）                          │
-├─────────────────────────────────────────────────────────┤
-│               Bull vs Bear 投研辩论                       │
-│         Bull Researcher ←→ Bear Researcher               │
-│               （最多 N 轮辩论）                             │
-├─────────────────────────────────────────────────────────┤
-│              Research Manager 综合研判                     │
-│         （深度思考 LLM，输出投资计划）                       │
-├─────────────────────────────────────────────────────────┤
-│                  Trader 交易方案                          │
-│         （A 股约束：T+1/涨跌停/手数）                       │
-├─────────────────────────────────────────────────────────┤
-│        Aggressive ←→ Conservative ←→ Neutral             │
-│               三方风险辩论                                 │
-├─────────────────────────────────────────────────────────┤
-│            Portfolio Manager 最终决策                      │
-│     （深度思考 LLM，输出 Buy/Hold/Sell + 仓位）             │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│              Analyst Report Generation                    │
+│     Market → Social → News → Fundamentals                 │
+│          → Policy → Hot Money → Lockup                    │
+│           (Each Analyst loops with tools)                 │
+├───────────────────────────────────────────────────────────┤
+│                Bull vs Bear Debate                        │
+│          Bull Researcher ↔ Bear Researcher                │
+│                    (Up to N rounds)                       │
+├───────────────────────────────────────────────────────────┤
+│              Research Manager Synthesis                   │
+│          (Deep-thinking LLM, outputs plan)                │
+├───────────────────────────────────────────────────────────┤
+│                 Trader Execution Plan                     │
+│        (A-share: T+1 / Price Limit / Lot Size)            │
+├───────────────────────────────────────────────────────────┤
+│                  Triple Risk Debate                       │
+│         Aggressive ↔ Conservative ↔ Neutral               │
+├───────────────────────────────────────────────────────────┤
+│           Portfolio Manager Final Decision                │
+│   (Deep-thinking LLM, outputs Buy/Hold/Sell + Position)   │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **双 LLM 设计**：
@@ -144,25 +144,41 @@
 
 ## 快速开始
 
-### 1. 环境准备
+> **前提条件**：Python >= 3.10。必须使用 LLM API Key（不能用 Claude/ChatGPT 订阅版），每次分析需 30-50 次 LLM 调用。
+
+### 第一步：克隆项目并创建虚拟环境
 
 ```bash
-# Python >= 3.10
 git clone https://github.com/simonlin1212/tradingagents-astock.git
 cd tradingagents-astock
+
+# 创建并激活虚拟环境（推荐，避免污染全局 Python）
+python -m venv .venv
+
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+# Windows CMD
+.\.venv\Scripts\activate.bat
+# macOS / Linux
+source .venv/bin/activate
+```
+
+> **为什么要用虚拟环境？** 虚拟环境让每个项目的依赖互相隔离，不会影响系统 Python 或其他项目。激活后终端提示符前会出现 `(.venv)` 字样。
+
+### 第二步：安装依赖
+
+```bash
 pip install -e .
 
 # 如需使用 Google Gemini 模型（可选）：
 pip install -e ".[google]"
 ```
 
-> **装完即可用，无需 Docker。** 安装后直接跑 `streamlit run web/app.py`（Web UI）或 `tradingagents`（CLI）即可，详见下方「Web UI」「CLI 方式」两节。Docker 仅是可选的部署方式，本地开发不需要。
+> **装完即可用，无需 Docker。** Docker 仅是可选的部署方式，本地开发不需要。
 
-### 2. 配置 LLM
+### 第三步：配置 LLM API Key
 
-> **必须使用 API Key**，不能用 Claude/ChatGPT 订阅版。每次分析需 30-50 次 LLM 调用，只有 API 模式支持。
-
-在项目根目录创建 `.env` 文件，按你选择的供应商配置：
+在项目根目录创建 `.env` 文件（已提供 `.env.enterprise.example` 可参考），**只填你用的那个供应商的 Key**，其他留空即可：
 
 ```bash
 # ── 方案 A：MiniMax（推荐，国内直连，性价比高）──────────
@@ -191,47 +207,93 @@ ANTHROPIC_API_KEY=sk-ant-xxx
 ANTHROPIC_AUTH_TOKEN=your-kimi-token
 ```
 
-### 3. 运行分析
+> **注意**：每个供应商用各自的环境变量名，不是 `OPENAI_API_KEY`。DeepSeek 用 `DEEPSEEK_API_KEY`，通义用 `DASHSCOPE_API_KEY`，智谱用 `ZHIPU_API_KEY`。
 
-根据你选择的供应商修改 config：
+### 第四步：运行分析
+
+**方式一：代码运行（推荐新手先体验）**
+
+编辑项目根目录的 `main.py`，选择你的供应商配置：
 
 ```python
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.default_config import DEFAULT_CONFIG
+from dotenv import load_dotenv
 
-# ── MiniMax 示例（推荐）─────────────────────────────
-config = {
+load_dotenv()
+
+# 从默认配置继承所有字段，再覆盖自定义部分（推荐做法）
+config = DEFAULT_CONFIG.copy()
+config.update({
+    "llm_provider": "deepseek",           # 改成你的供应商
+    "deep_think_llm": "deepseek-chat",    # 改成你的模型
+    "quick_think_llm": "deepseek-chat",   # 改成你的模型
+    "output_language": "Chinese",
+})
+
+# A 股数据源（免费直连，无需额外配置）
+config["data_vendors"] = {
+    "core_stock_apis": "a_stock",
+    "technical_indicators": "a_stock",
+    "fundamental_data": "a_stock",
+    "news_data": "a_stock",
+    "signal_data": "a_stock",
+}
+
+ta = TradingAgentsGraph(debug=True, config=config)
+
+# 传入 6 位 A 股股票代码 + 日期，运行分析
+_, decision = ta.propagate("600519", "2026-06-15")
+print(decision)
+```
+
+然后运行：
+
+```bash
+python main.py
+```
+
+**其他供应商配置示例**（只需改 `config.update(...)` 里的内容）：
+
+```python
+# ── MiniMax（推荐）─────────────────────────────
+config.update({
     "llm_provider": "minimax",
     "deep_think_llm": "MiniMax-M2.7",
     "quick_think_llm": "MiniMax-M2.7-highspeed",
     "output_language": "Chinese",
-}
+})
 
-# ── DeepSeek 示例 ───────────────────────────────────
-# config = {
-#     "llm_provider": "deepseek",
-#     "deep_think_llm": "deepseek-chat",
-#     "quick_think_llm": "deepseek-chat",
-#     "output_language": "Chinese",
-# }
+# ── 通义千问 Qwen ──────────────────────────────
+config.update({
+    "llm_provider": "qwen",
+    "deep_think_llm": "qwen-max",
+    "quick_think_llm": "qwen-turbo",
+    "output_language": "Chinese",
+})
 
-# ── Anthropic + Kimi 示例 ───────────────────────────
-# config = {
-#     "llm_provider": "anthropic",
-#     "deep_think_llm": "claude-sonnet-4-6",
-#     "quick_think_llm": "claude-sonnet-4-6",
-#     "backend_url": "https://api.kimi.com/coding/",
-#     "output_language": "Chinese",
-# }
-
-ta = TradingAgentsGraph(debug=True, config=config)
-final_state, decision = ta.propagate("688017", "2026-05-12")
-print(decision)
+# ── Anthropic + Kimi 中转 ──────────────────────
+config.update({
+    "llm_provider": "anthropic",
+    "deep_think_llm": "claude-sonnet-4-6",
+    "quick_think_llm": "claude-sonnet-4-6",
+    "backend_url": "https://api.kimi.com/coding/",
+    "output_language": "Chinese",
+})
 ```
 
-### 4. CLI 方式
+**方式二：Web UI（图形界面，不写代码）**
 
 ```bash
-tradingagents            # 交互式 CLI
+streamlit run web/app.py
+```
+
+打开浏览器访问 `http://localhost:8501`，在侧边栏选择模型、输入股票代码即可。
+
+**方式三：CLI 交互式**
+
+```bash
+tradingagents            # 交互式命令行
 tradingagents --help     # 查看所有选项
 ```
 
@@ -377,7 +439,7 @@ TradingAgents-Astock/
 
 本项目是 TauricResearch/TradingAgents 的 fork，继承 Apache 2.0 许可证。详见 [NOTICE](./NOTICE)。
 
-## Donate
+## Sponsor
 
 如果这个工具帮到了你的投研工作流，欢迎请作者喝杯咖啡 ☕
 
