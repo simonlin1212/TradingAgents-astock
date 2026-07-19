@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.2.19] — 2026-07-19
+
+新增可选 provider `claude_agent_sdk`：让**深度思考的两个节点**（Research/Portfolio Manager）经 Claude Agent SDK 走**个人 Claude Pro/Max 订阅额度**，而非按 token 计费的 API。仅个人自用。
+
+### 新增
+- **`claude_agent_sdk` provider**（可选依赖 `[agentsdk]`，默认不装）：`tradingagents/llm_clients/claude_agent_sdk_client.py`。鸭子类型 LangChain 适配器（`invoke` / `with_structured_output`；`bind_tools` 抛错，POC 不支持工具节点）+ 异步→同步桥接。经 `deep_think_provider_override="claude_agent_sdk"` 开启（默认 `None`，不启用即行为完全不变）。
+- **F-004 启动护栏**：启用该 provider 时若检测到 `ANTHROPIC_API_KEY` 存在则报错中止——它优先级高于订阅 OAuth token，会悄悄走 API 计费。
+- **F-005 自动降级**：撞订阅额度（`RateLimitEvent.status=='rejected'`）或调用失败时，自动降级到 `agent_sdk_fallback_provider`/`agent_sdk_fallback_model`（缺省回落 `llm_provider`+`deep_think_llm`），不中断分析。
+- 新配置项：`deep_think_provider_override` / `agent_sdk_model`（缺省 `claude-opus-4-8`）/ `agent_sdk_fallback_provider` / `agent_sdk_fallback_model`。
+
+### 注意
+- `claude-agent-sdk` 要求 `httpx>=0.28.1`，与 mootdx 的 `httpx==0.25.2` 冲突（同 `[google]`），故隔离为可选依赖；mootdx 运行时在 0.28.1 下仍正常。
+- 仅覆盖 Claude 模型；订阅额度与网页版/Claude Code 共享、按周动态限流、无 SLA，不适合定时批处理；发布成给他人用的产品须另取 Anthropic 批准。
+- 认证：`claude setup-token` → `CLAUDE_CODE_OAUTH_TOKEN`（见 README「用 Max 订阅额度」）。
+
+### 测试
+- 新增 `tests/test_agent_sdk_provider.py` 16 项（适配器 / 结构化输出 / bind_tools 抛错 / 依赖与 OAuth 守卫 / factory 路由 / 跨 provider 降级 / F-004 护栏 / `RateLimitEvent` 语义：`allowed_warning` 不降级、`rejected` 才降级）。
+- 全量回归：Python 3.12 下 `pytest tests/` **151 passed + 44 subtests**（`test_google_api_key` 因未装 `[google]` 跳过）。
+
+### 审查
+- 规格期两轮 Codex 对抗审查（方案 + 拆分）；开发期 N4 代码审查经对抗式子代理发现并修复一处高危 bug：`RateLimitEvent` 对 `allowed_warning`（仍在服务）误判为失败、丢弃结果并静默切到付费 API，已修正为仅 `rejected` 降级。
+
 ## [0.2.18] — 2026-07-10
 
 合并社区 PR #75（致谢 @wangyuxun6699），与 v0.2.17 的 #76 修复同属一类问题：LLM 工具调用把非股票标识当 `ticker` 传入。
