@@ -12,9 +12,9 @@ DEFAULT_CONFIG = {
     # Pending entries are never pruned. None disables rotation entirely.
     "memory_log_max_entries": None,
     # LLM settings
-    "llm_provider": "openai",
-    "deep_think_llm": "gpt-5.4",
-    "quick_think_llm": "gpt-5.4-mini",
+    "llm_provider": "deepseek",
+    "deep_think_llm": "deepseek-v4-pro",
+    "quick_think_llm": "deepseek-chat",
     # When None, each provider's client falls back to its own default endpoint
     # (api.openai.com for OpenAI, generativelanguage.googleapis.com for Gemini, ...).
     # The CLI overrides this per provider when the user picks one. Keeping a
@@ -25,6 +25,17 @@ DEFAULT_CONFIG = {
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"
     "anthropic_effort": None,           # "high", "medium", "low"
+    # Claude Agent SDK provider (personal Pro/Max subscription; optional [agentsdk] extra).
+    # When set to "claude_agent_sdk", ONLY the deep_thinking_llm nodes (Research
+    # Manager / Portfolio Manager) route through the subscription. None = unchanged.
+    "deep_think_provider_override": None,
+    # The Claude model id the Agent SDK uses. MUST be a real Claude model — do
+    # NOT reuse deep_think_llm (default "deepseek-v4-pro" is a DeepSeek model id).
+    "agent_sdk_model": "claude-opus-4-8",
+    # Fallback when the subscription call fails / hits quota. None → fall back to
+    # llm_provider + deep_think_llm (a real, separately-billed provider).
+    "agent_sdk_fallback_provider": None,
+    "agent_sdk_fallback_model": None,
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,

@@ -47,6 +47,11 @@ Upstream = "https://github.com/TauricResearch/TradingAgents"
 
 [project.optional-dependencies]
 google = ["langchain-google-genai>=4.0.0"]
+# Personal-use only: route deep-thinking nodes through a Claude Pro/Max
+# subscription via the Claude Agent SDK instead of the pay-per-token API.
+# Kept optional because claude-agent-sdk requires httpx>=0.28.1, which
+# conflicts with mootdx's httpx==0.25.2 pin (same reason as [google]).
+agentsdk = ["claude-agent-sdk>=0.2.0"]
 
 [project.scripts]
 tradingagents = "cli.main:app"

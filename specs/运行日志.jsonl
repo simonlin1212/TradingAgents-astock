@@ -1,0 +1,8 @@
+{"at":"2026-07-19T18:24:15+0800","node":"N1","feature":"1.agent-sdk-max-provider","task":null,"event":"node_enter","detail":"初始化:扫描到1个feature,三件套齐全,codex可用,git=remote"}
+{"at":"2026-07-19T18:24:15+0800","node":"N1","feature":"1.agent-sdk-max-provider","task":null,"event":"pause","detail":"规格审批入口闸:awaiting_review,等用户确认摘要卡"}
+{"at":"2026-07-19T18:30:36+0800","node":"N2","feature":"1.agent-sdk-max-provider","task":null,"event":"node_enter","detail":"进入feature,镜像9任务,探测claude-agent-sdk v0.2.123真实API"}
+{"at":"2026-07-19T18:30:36+0800","node":"N2","feature":"1.agent-sdk-max-provider","task":null,"event":"decision","detail":"实测发现claude-agent-sdk顶httpx到0.28.1与mootdx冲突(同[google]),坐实必须可选依赖;框架运行时仍正常导入"}
+{"at":"2026-07-19T18:37:07+0800","node":"N3","feature":"1.agent-sdk-max-provider","task":"T-002..T-007","event":"task_done","detail":"实现6个代码任务+14单测全绿,全量149通过无回归"}
+{"at":"2026-07-19T18:37:07+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"review","detail":"进入第1轮Codex代码审查"}
+{"at":"2026-07-19T18:49:08+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"degrade","detail":"Codex N4超时10min(仅回39字节,无文件范围漫游全仓库),降级为对抗式子代理"}
+{"at":"2026-07-19T18:49:08+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"decision","detail":"自审修2处:_run_async线程异常吞掉→加try/except;_build_options下标→.get()"}
