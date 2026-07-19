@@ -241,10 +241,18 @@ class ClaudeAgentSDKClient(BaseLLMClient):
                 f"(original import error: {_IMPORT_ERROR})"
             )
         if not os.getenv(OAUTH_ENV):
-            raise RuntimeError(
-                f"{OAUTH_ENV} is not set. Log in to your Claude Pro/Max account and "
-                "run `claude setup-token`, then export the token before selecting the "
-                "claude_agent_sdk provider."
+            # No explicit subscription token — the Agent SDK spawns the `claude`
+            # CLI, which inherits the ambient logged-in session (macOS Keychain /
+            # ~/.claude credentials). That is the SAME personal subscription path;
+            # `claude setup-token` merely pins an explicit, portable token needed
+            # on headless/CI boxes with no logged-in CLI. Proceed and let the SDK
+            # surface an auth error at call time (F-005 fallback catches it)
+            # rather than block a machine that is already logged in.
+            logger.info(
+                "%s not set — using the ambient logged-in `claude` session "
+                "(personal subscription). Run `claude setup-token` to pin an "
+                "explicit token for headless use.",
+                OAUTH_ENV,
             )
         return AgentSDKChatModel(self, self.fallback_spec)
 
@@ -262,8 +270,13 @@ class ClaudeAgentSDKClient(BaseLLMClient):
             "allowed_tools": [],      # no built-in tools (Read/Write/Bash/…)
             "setting_sources": [],    # don't load filesystem settings/skills/CLAUDE.md
             "permission_mode": "bypassPermissions",
-            "env": {OAUTH_ENV: os.environ.get(OAUTH_ENV, "")},
         }
+        token = os.environ.get(OAUTH_ENV)
+        if token:
+            # Pin the explicit subscription token when provided; otherwise let the
+            # SDK fall back to the ambient logged-in CLI session (Keychain) —
+            # passing an empty token here is unnecessary and only muddies intent.
+            opts["env"] = {OAUTH_ENV: token}
         if system_prompt:
             opts["system_prompt"] = system_prompt
         if output_format is not None:
@@ -277,13 +290,21 @@ class ClaudeAgentSDKClient(BaseLLMClient):
             if isinstance(message, _sdk.RateLimitEvent):
                 # RateLimitEvent fires on ANY status change, including
                 # "allowed_warning" (near the limit but STILL SERVING) and
-                # "allowed" (recovered). Only "rejected" means the call was
-                # actually blocked. Raising on a warning would discard a
-                # successful subscription response and silently fall back to
-                # the paid API — the opposite of this feature's purpose.
+                # "allowed" (recovered). Only status=="rejected" means THIS call
+                # was actually blocked. Raising on anything else discards a
+                # successful subscription response and silently falls back to
+                # the paid provider — the opposite of this feature's purpose.
+                #
+                # In particular, DO NOT key off overage_status: it is a separate
+                # axis describing whether *overage* (paid usage beyond the plan)
+                # is available. When an org disables overage it reports
+                # overage_status="rejected"/"org_level_disabled" on EVERY event,
+                # including status=="allowed" ones the plan served within
+                # allowance — so keying fallback off it downgraded 100% of
+                # subscription calls to the paid fallback. (regression:
+                # test_query_allowed_with_overage_rejected_does_not_fall_back)
                 info = getattr(message, "rate_limit_info", None)
-                if getattr(info, "status", None) == "rejected" or \
-                        getattr(info, "overage_status", None) == "rejected":
+                if getattr(info, "status", None) == "rejected":
                     raise _RateLimitHit(str(info))
                 logger.warning(
                     "claude_agent_sdk: rate-limit status=%s (still serving); continuing",

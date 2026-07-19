@@ -8,11 +8,13 @@
 - **为什么**:装 SDK 会把 httpx 顶到 0.28.1。
 - **怎么应用**:放 `[agentsdk]` extra,`pip install -e .` 默认不装。**实测 mootdx 在 httpx 0.28.1 下运行时仍正常导入**(pin 只是元数据约束,非运行时崩),但为保守仍隔离为可选。
 
-## 2. RateLimitEvent 语义 — 只有 rejected 才是硬失败(高危,对抗审查发现)
+## 2. RateLimitEvent 语义 — 只有 status=='rejected' 才是硬失败(高危,两轮才修净)
 
-`claude_agent_sdk` 的 `query()` 在限流**状态变化**时就 emit `RateLimitEvent`,`status ∈ {allowed, allowed_warning, rejected}`,只有 `rejected` 是真被拒。
-- **为什么**:最初实现对**任何** `RateLimitEvent` 都抛 `_RateLimitHit` → 逼近额度出 `allowed_warning` 时,订阅调用其实成功了却被误判失败、丢弃结果、**静默切到付费 API**,恰好违背"省订阅额度"的初衷。
-- **怎么应用**:`_query` 只在 `status=='rejected'` 或 `overage_status=='rejected'` 时抛,否则 `logger.warning` + `continue`(不丢后续 AssistantMessage/ResultMessage)。已有 `test_query_allowed_warning_does_not_fall_back` / `test_query_rejected_triggers_fallback` 锁定。
+`claude_agent_sdk` 的 `query()` 在限流**状态变化**时就 emit `RateLimitEvent`,`status ∈ {allowed, allowed_warning, rejected}`,**只有 `status=='rejected'` 是本次请求真被拒**。
+- **为什么**:最初实现对**任何** `RateLimitEvent` 都抛 `_RateLimitHit` → 逼近额度出 `allowed_warning` 时订阅调用其实成功了却被误判失败、丢弃结果、**静默切到付费 provider**,违背"省订阅额度"的初衷。第一轮对抗审查只修了 `allowed_warning`,却把判断写成 `status=='rejected' or overage_status=='rejected'`——**埋了第二个坑**。
+- **`overage_status` 千万别当降级信号**:它是**另一个维度**,描述"超额付费(overage)是否可用",与本次请求是否被服务无关。**组织禁用 overage 时,每个事件(含 `status=='allowed'`)都带 `overage_status='rejected'`/`overage_disabled_reason='org_level_disabled'`** → 若据此降级,则**100% 订阅调用被静默降级到付费 fallback,订阅永远用不上**(2026-07-19 本机真实冒烟才暴露,deepseek fallback 还会冒充 Claude 答错模型名,极隐蔽)。
+- **怎么应用**:`_query` **只在 `status=='rejected'`** 时抛 `_RateLimitHit`,其余一律 `logger.warning` + `continue`(不丢后续 AssistantMessage/ResultMessage)。回归测试三连:`test_query_allowed_warning_does_not_fall_back` / `test_query_allowed_with_overage_rejected_does_not_fall_back` / `test_query_rejected_triggers_fallback`。
+- **教训**:限流/配额 API 往往有多个正交状态位,别把"配置类"位(overage 是否开)误当"本次结果"位(request 是否被拒)。这类 bug 单测不出、只有真跑订阅才现形——**T-009 本机冒烟是必需的验收,不能省**。
 
 ## 3. F-004 护栏 — ANTHROPIC_API_KEY 抢占订阅计费
 

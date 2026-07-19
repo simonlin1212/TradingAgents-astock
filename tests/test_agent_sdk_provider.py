@@ -93,14 +93,16 @@ def test_get_llm_raises_when_sdk_missing(monkeypatch, oauth_env):
         client.get_llm()
 
 
-def test_get_llm_raises_when_oauth_missing(monkeypatch):
+def test_get_llm_uses_ambient_login_when_oauth_missing(monkeypatch):
+    # With no explicit token, get_llm() no longer raises — the Agent SDK inherits
+    # the ambient logged-in `claude` session (Keychain / ~/.claude). Any genuine
+    # auth failure surfaces at call time and triggers the F-005 fallback instead.
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     # Only meaningful when the SDK is importable; otherwise the import guard wins.
     if mod._sdk is None:
         pytest.skip("claude-agent-sdk not installed")
     client = ClaudeAgentSDKClient("claude-opus-4-8")
-    with pytest.raises(RuntimeError, match="CLAUDE_CODE_OAUTH_TOKEN"):
-        client.get_llm()
+    assert isinstance(client.get_llm(), mod.AgentSDKChatModel)
 
 
 # --------------------------------------------------------------------------- #
@@ -262,6 +264,29 @@ def test_query_allowed_warning_does_not_fall_back(monkeypatch, oauth_env):
         monkeypatch,
         _fake(mod._sdk.RateLimitEvent,
               rate_limit_info=_rate_limit_info("allowed_warning")),
+        _fake(mod._sdk.AssistantMessage, content=[_fake(mod._sdk.TextBlock, text="served by subscription")]),
+        _fake(mod._sdk.ResultMessage, is_error=False, structured_output=None,
+              result="served by subscription", stop_reason="end_turn", api_error_status=None),
+    )
+    client = ClaudeAgentSDKClient(
+        "claude-opus-4-8",
+        fallback_spec={"provider": "deepseek", "model": "deepseek-v4-pro", "base_url": None},
+    )
+    _install_stub_fallback(monkeypatch)
+    result = client.get_llm().invoke("analyze")
+    assert result.content == "served by subscription"  # NOT "served by fallback"
+
+
+@pytest.mark.skipif(mod._sdk is None, reason="claude-agent-sdk not installed")
+def test_query_allowed_with_overage_rejected_does_not_fall_back(monkeypatch, oauth_env):
+    # Real-world case: the org disables overage, so every event carries
+    # overage_status="rejected" — but status="allowed" means the plan served
+    # this call. Must keep the subscription response, NOT bail to the paid
+    # fallback. (Regression for the "100% silent downgrade" bug.)
+    _patch_query(
+        monkeypatch,
+        _fake(mod._sdk.RateLimitEvent,
+              rate_limit_info=_rate_limit_info("allowed", overage_status="rejected")),
         _fake(mod._sdk.AssistantMessage, content=[_fake(mod._sdk.TextBlock, text="served by subscription")]),
         _fake(mod._sdk.ResultMessage, is_error=False, structured_output=None,
               result="served by subscription", stop_reason="end_turn", api_error_status=None),

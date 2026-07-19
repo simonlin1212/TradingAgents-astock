@@ -243,13 +243,18 @@ print(decision)
 # 装可选依赖（会顶 httpx>=0.28.1，与 mootdx 冲突 —— 建议单开一个 venv 专门用它）
 uv pip install --python .venv/bin/python -e ".[agentsdk]"
 
-# 登录你的 Pro/Max 账号，生成订阅 OAuth token
-claude setup-token
-export CLAUDE_CODE_OAUTH_TOKEN=<上一步输出的 token>
-
 # 关键：清掉 ANTHROPIC_API_KEY，否则启动护栏（F-004）直接报错拦截
 unset ANTHROPIC_API_KEY
 ```
+
+**认证有两种方式，任选其一：**
+
+- **机器已登录**（本地开发常见）：这台机器的 `claude` CLI 若已登录你的 Pro/Max，**什么都不用做**——Agent SDK 会拉起 `claude` 子进程，直接继承钥匙串里的订阅登录态。
+- **显式 token**（headless / CI，或想固定凭据）：
+  ```bash
+  claude setup-token
+  export CLAUDE_CODE_OAUTH_TOKEN=<上一步输出的 token>   # 或写进 .env
+  ```
 
 > 护栏是故意的：`ANTHROPIC_API_KEY` 一旦存在会被优先、悄悄走按 token 计费的 API，让你以为在用订阅额度其实在烧钱。所以启用 override 时两者不可共存。
 
