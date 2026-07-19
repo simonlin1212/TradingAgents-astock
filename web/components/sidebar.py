@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 
 import streamlit as st
@@ -189,6 +190,32 @@ def _render_llm_config() -> None:
             "也可在 .env 里设 BACKEND_URL 代替此处。"
         ),
     )
+
+    # ── 个人订阅额度（可选，仅个人自用）──────────────────────────────
+    use_sub = st.checkbox(
+        "深度节点走个人 Claude 订阅 (Agent SDK)",
+        key="deep_think_subscription",
+        help=(
+            "开启后，仅 Research/Portfolio Manager 两个深度节点经 Claude Agent SDK "
+            "走你个人 Pro/Max 订阅额度；其余 7 个分析师仍走上面选的供应商。"
+            "需装 [agentsdk] 依赖，且本机 claude 已登录（或设 CLAUDE_CODE_OAUTH_TOKEN）。"
+        ),
+    )
+    if use_sub:
+        st.session_state.setdefault("agent_sdk_model", "claude-opus-4-8")
+        st.text_input(
+            "订阅使用的 Claude 模型",
+            key="agent_sdk_model",
+            help=(
+                "必须是真实 Claude 模型 id（如 claude-opus-4-8）。"
+                "撞额度/失败时自动降级到上面选的供应商 + 深度思考模型。"
+            ),
+        )
+        if os.getenv("ANTHROPIC_API_KEY"):
+            st.warning(
+                "检测到 ANTHROPIC_API_KEY —— 启用订阅时它会被优先、悄悄走 API 计费，"
+                "启动护栏会直接报错中止。请在 .env 清空 ANTHROPIC_API_KEY 后重启 Web。"
+            )
 
 
 def render_sidebar() -> None:

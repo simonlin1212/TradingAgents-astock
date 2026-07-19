@@ -175,6 +175,13 @@ def _build_config() -> dict:
     config["max_risk_discuss_rounds"] = 1
     config["checkpoint_enabled"] = True
     config["output_language"] = "Chinese"
+    # Optional: route the two deep-thinking nodes through a personal Claude
+    # Pro/Max subscription (Agent SDK). Leaving the fallback keys None makes the
+    # graph fall back to the sidebar-selected llm_provider + deep_think_llm on
+    # quota/failure, so no extra fields are needed here.
+    if st.session_state.get("deep_think_subscription"):
+        config["deep_think_provider_override"] = "claude_agent_sdk"
+        config["agent_sdk_model"] = st.session_state.get("agent_sdk_model") or "claude-opus-4-8"
     return config
 
 
