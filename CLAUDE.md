@@ -6,7 +6,8 @@
 - **仓库**: https://github.com/simonlin1212/TradingAgents-astock
 - **协议**: Apache 2.0
 - **Python**: >=3.10
-- **当前版本**: 0.2.18
+- **当前版本**: 0.2.19
+- **业务地图**: 已全量生成 2026-07-19（codebase-context，见 `docs/codebase-context/`，`/cm:prd` 据此行动不再重复判断）
 
 ## 架构
 
@@ -52,6 +53,9 @@ v0.2.5 起完全移除 akshare 依赖，所有数据通过直连 HTTP API 获取
 
 ### 模型兼容性
 deepseek-v4-flash 等模型在 tool call 时可能返回中文股票名而非 6 位代码。`safe_ticker_component` 已加兜底自动转码，但不同模型表现仍有差异。
+
+### Claude Agent SDK provider（v0.2.19 新增，仅个人自用）
+可选 provider `claude_agent_sdk`（`tradingagents/llm_clients/claude_agent_sdk_client.py`，可选依赖 `[agentsdk]`），让 `deep_thinking_llm`（Research/Portfolio Manager）经 Claude Agent SDK 走**个人 Pro/Max 订阅额度**而非按 token 计费的 API。经 `deep_think_provider_override="claude_agent_sdk"` 开启（默认 None）。关键点：`claude-agent-sdk` 顶 httpx>=0.28.1 与 mootdx 冲突（故可选）；**F-004 护栏**启动时拒 `ANTHROPIC_API_KEY` 共存（防悄悄回 API 计费）；**F-005** 撞额度/失败自动降级到 fallback provider；`RateLimitEvent` 只有 `status=='rejected'` 才降级（`allowed_warning` 仍在服务不能丢）。仅覆盖 Claude 模型、订阅额度共享无 SLA、发布给他人须另取 Anthropic 批准。详见 `specs/1.agent-sdk-max-provider/` 与 `specs/LESSONS.md`。
 
 ### 待处理 PR
 - PR #18（hejingchi）：start_date 功能 + 主题切换 + Windows 字体。不建议直接 merge（与 v0.2.6 冲突），start_date 功能值得后续自行实现。

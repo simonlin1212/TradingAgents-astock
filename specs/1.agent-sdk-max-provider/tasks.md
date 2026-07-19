@@ -31,7 +31,7 @@
 
 - [x] T-007: 集成/回归测试——factory 路由端到端、F-007 默认安装不带 SDK + 缺依赖提示(AC-005)、启用 override 测试正确 `monkeypatch.delenv` 处理 `conftest.py` 注入的 placeholder key(AC-007)、**不启用时 `.venv/bin/python -m pytest tests/ -v` 全绿且行为不变(AC-004)**~1h
 - [ ] T-008: 文档同步——README/`CLAUDE.md`(新 provider、`claude setup-token` 步骤、`[agentsdk]` 安装、"仅个人自用/共享额度/无 SLA/护栏"限制)+ `.env.example` 加 `CLAUDE_CODE_OAUTH_TOKEN` 及"与 `ANTHROPIC_API_KEY` 不可共存"说明(AC-006)+ `docs/codebase-context/{01-overview,02-directory,06-core-modules}.md` 增量(新 extra / 新客户端文件 / 新 provider)~45min
-- [ ] T-009: 本地端到端冒烟——`claude setup-token` → 启用 override → 跑一次真实分析,确认 research_manager/portfolio_manager 走 Agent SDK 且订阅额度被消耗、`ANTHROPIC_API_KEY` 未共存(AC-001/AC-002)~30min
+- [ ] T-009 **[待用户执行]**: 本地端到端冒烟(需本人 claude setup-token 登录 Max,无法代跑;步骤见 README「用 Max 订阅额度」)——`claude setup-token` → 启用 override → 跑一次真实分析,确认 research_manager/portfolio_manager 走 Agent SDK 且订阅额度被消耗、`ANTHROPIC_API_KEY` 未共存(AC-001/AC-002)~30min
 
 > 无部署任务:库内 provider,无 staging/部署形态,按规则不生成部署任务。
 

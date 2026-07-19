@@ -6,3 +6,4 @@
 {"at":"2026-07-19T18:37:07+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"review","detail":"进入第1轮Codex代码审查"}
 {"at":"2026-07-19T18:49:08+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"degrade","detail":"Codex N4超时10min(仅回39字节,无文件范围漫游全仓库),降级为对抗式子代理"}
 {"at":"2026-07-19T18:49:08+0800","node":"N4","feature":"1.agent-sdk-max-provider","task":"T-002","event":"decision","detail":"自审修2处:_run_async线程异常吞掉→加try/except;_build_options下标→.get()"}
+{"at":"2026-07-19T19:01:26+0800","node":"N5","feature":"1.agent-sdk-max-provider","task":"T-001..T-007","event":"task_done","detail":"实现+测试已提交,tasks标记[x],LESSONS/METRICS已写"}

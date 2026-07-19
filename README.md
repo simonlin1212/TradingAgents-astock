@@ -154,13 +154,18 @@ pip install -e .
 
 # 如需使用 Google Gemini 模型（可选）：
 pip install -e ".[google]"
+
+# 如需让 deep 节点走个人 Claude Pro/Max 订阅额度（可选，仅个人自用）：
+pip install -e ".[agentsdk]"
 ```
 
 > **装完即可用，无需 Docker。** 安装后直接跑 `streamlit run web/app.py`（Web UI）或 `tradingagents`（CLI）即可，详见下方「Web UI」「CLI 方式」两节。Docker 仅是可选的部署方式，本地开发不需要。
 
 ### 2. 配置 LLM
 
-> **必须使用 API Key**，不能用 Claude/ChatGPT 订阅版。每次分析需 30-50 次 LLM 调用，只有 API 模式支持。
+> **默认必须使用 API Key**。每次分析需 30-50 次 LLM 调用。
+>
+> 例外（可选，仅个人自用）：装 `[agentsdk]` 后，可让**深度思考的两个节点**（Research/Portfolio Manager）走你**个人 Claude Pro/Max 订阅额度**而非按 token 计费的 API——见下方「用 Max 订阅额度（可选）」。7 个工具 Analyst 仍走 API。
 
 在项目根目录创建 `.env` 文件，按你选择的供应商配置：
 
@@ -227,6 +232,35 @@ ta = TradingAgentsGraph(debug=True, config=config)
 final_state, decision = ta.propagate("688017", "2026-05-12")
 print(decision)
 ```
+
+### 用 Max 订阅额度（可选，仅个人自用）
+
+装 `[agentsdk]` 后，可让 deep 节点走你个人 Claude Pro/Max 订阅额度：
+
+```bash
+# 1. 登录你的 Pro/Max 账号并生成订阅 OAuth token
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN=<上一步输出>
+# 2. 确保没有 ANTHROPIC_API_KEY（会被优先、悄悄走 API 计费；启用时护栏会直接报错拦截）
+unset ANTHROPIC_API_KEY
+```
+
+```python
+config = {
+    "llm_provider": "deepseek",          # 7 个工具 Analyst 仍走这个（API）
+    "deep_think_llm": "deepseek-v4-pro",
+    "quick_think_llm": "deepseek-chat",
+    # 只让 Research/Portfolio Manager 走订阅：
+    "deep_think_provider_override": "claude_agent_sdk",
+    "agent_sdk_model": "claude-opus-4-8",     # 订阅用的 Claude 模型（别填 deepseek 串）
+    # 撞额度/失败自动降级（缺省回落到 llm_provider + deep_think_llm）：
+    "agent_sdk_fallback_provider": "deepseek",
+    "agent_sdk_fallback_model": "deepseek-v4-pro",
+    "output_language": "Chinese",
+}
+```
+
+⚠️ **注意**：仅个人自用（发布成给他人用的产品须另取 Anthropic 批准）；订阅额度与网页版/Claude Code **共享**、按周动态限流、**无 SLA**，不适合有时限的定时批处理；只覆盖 Claude 模型。撞额度时会自动降级到 fallback（按 token 计费）。
 
 ### 4. CLI 方式
 
