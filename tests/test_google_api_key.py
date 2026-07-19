@@ -3,6 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
+# langchain_google_genai is the optional `[google]` extra (kept out of the
+# default install to avoid the mootdx httpx pin conflict). Skip cleanly when
+# it isn't installed instead of erroring at collection.
+pytest.importorskip("langchain_google_genai")
+
 from tradingagents.llm_clients.google_client import GoogleClient
 
 
