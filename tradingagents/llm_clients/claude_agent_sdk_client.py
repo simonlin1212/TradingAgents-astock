@@ -11,10 +11,13 @@ users' subscription credentials requires Anthropic approval — out of scope.
 extra). The import below is guarded so the base install never breaks; the
 error surfaces only when this provider is actually selected.
 
-Scope (POC): serves the ``deep_thinking_llm`` nodes (Research Manager /
-Portfolio Manager) which call ``.invoke(str)`` and ``.with_structured_output``
-directly and never ``bind_tools``. Tool-using analysts must use another
-provider — ``bind_tools`` raises here on purpose.
+Scope: originally the ``deep_thinking_llm`` nodes (Research Manager / Portfolio
+Manager) which call ``.invoke(str)`` / ``.with_structured_output`` directly.
+``bind_tools`` is now also supported for the tool-using analysts: their
+LangChain tools are bridged to Agent SDK in-process MCP tools and the SDK runs
+the ReAct loop internally, returning a final report (no tool_calls) so
+LangGraph treats the analyst as done. On failure/quota the fallback provider's
+``bind_tools`` rejoins LangGraph's normal external ToolNode loop.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import threading
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
+from langchain_core.runnables import Runnable
 
 from .base_client import BaseLLMClient
 
@@ -35,13 +39,27 @@ logger = logging.getLogger(__name__)
 
 OAUTH_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 
+# Tool-loop knobs. When the deep-thinking nodes call plain .invoke there are no
+# tools and a single turn suffices; the tool-using analysts need the Agent SDK
+# to run a multi-turn agentic loop internally (call tool → read result → …).
+_MCP_SERVER_NAME = "astock_tools"
+_TOOL_MAX_TURNS = 30           # generous: an analyst may pull ~8 indicators + data
+_TOOL_RESULT_CAP = 60_000      # per-tool result char cap (safety, not normally hit)
+
 try:  # optional dependency — see module docstring
     import claude_agent_sdk as _sdk
-    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKError
+    from claude_agent_sdk import (
+        ClaudeAgentOptions,
+        ClaudeSDKError,
+        create_sdk_mcp_server,
+        tool as _sdk_tool,
+    )
     _IMPORT_ERROR: Optional[Exception] = None
 except Exception as exc:  # ImportError or any transitive import failure
     _sdk = None
     ClaudeAgentOptions = None
+    create_sdk_mcp_server = None
+    _sdk_tool = None
     ClaudeSDKError = Exception  # placeholder so `except` clauses never NameError
     _IMPORT_ERROR = exc
 
@@ -141,6 +159,35 @@ def _run_async(coro):
     return box["value"]
 
 
+def _sdk_tools_from_langchain(lc_tools):
+    """Wrap LangChain tools as Agent SDK in-process MCP tools.
+
+    The analysts drive tools via LangGraph's external ReAct loop (return
+    tool_calls → ToolNode executes → repeat). The Agent SDK instead runs the
+    whole loop *internally*, so we register each LangChain tool as an SDK tool
+    whose async handler invokes the original tool on a worker thread (the data
+    layer is synchronous and hits the network — never block the SDK's loop).
+    """
+    sdk_tools = []
+    for lc in lc_tools:
+        schema = (
+            lc.args_schema.model_json_schema()
+            if getattr(lc, "args_schema", None) is not None
+            else {"type": "object", "properties": {}}
+        )
+
+        @_sdk_tool(lc.name, (lc.description or lc.name)[:1000], schema)
+        async def _handler(args, _lc=lc):  # _lc default-arg pins the loop var
+            try:
+                result = await asyncio.to_thread(_lc.invoke, dict(args))
+            except Exception as exc:  # tool failure is data for the model, not a crash
+                result = f"[tool error] {exc}"
+            return {"content": [{"type": "text", "text": str(result)[:_TOOL_RESULT_CAP]}]}
+
+        sdk_tools.append(_handler)
+    return sdk_tools
+
+
 # --------------------------------------------------------------------------- #
 # adapters returned to the agents
 # --------------------------------------------------------------------------- #
@@ -165,6 +212,35 @@ class _StructuredAgentSDK:
                 exc, self._adapter._fallback_desc(),
             )
             return fallback.with_structured_output(self._schema).invoke(prompt, *args, **kwargs)
+
+
+class _BoundAgentSDK(Runnable):
+    """What ``bind_tools(tools)`` returns — a Runnable so ``prompt | bound`` works.
+
+    ``.invoke`` runs the Agent SDK's internal tool loop on the subscription and
+    returns the final report as an ``AIMessage`` with no ``tool_calls``. On a
+    subscription failure/quota it defers to the fallback provider, whose
+    ``bind_tools`` returns real ``tool_calls`` and so rejoins LangGraph's normal
+    external ToolNode loop — no graph change needed either way.
+    """
+
+    def __init__(self, adapter: "AgentSDKChatModel", tools):
+        self._adapter = adapter
+        self._tools = tools
+
+    def invoke(self, input, config=None, **kwargs):
+        try:
+            return self._adapter._client._invoke_with_tools(self._tools, input)
+        except _FALLBACK_ERRORS as exc:
+            fallback = self._adapter._get_fallback()
+            if fallback is None:
+                raise
+            logger.warning(
+                "claude_agent_sdk: tool invoke failed (%s); "
+                "falling back to provider '%s'",
+                exc, self._adapter._fallback_desc(),
+            )
+            return fallback.bind_tools(self._tools).invoke(input, config, **kwargs)
 
 
 class AgentSDKChatModel:
@@ -208,12 +284,13 @@ class AgentSDKChatModel:
     def with_structured_output(self, schema, **kwargs):
         return _StructuredAgentSDK(self, schema)
 
-    def bind_tools(self, *args, **kwargs):
-        raise NotImplementedError(
-            "claude_agent_sdk provider does not support bind_tools. This POC "
-            "serves only the structured/plain deep-thinking nodes; route "
-            "tool-using analysts through another provider (e.g. deepseek)."
-        )
+    def bind_tools(self, tools, **kwargs):
+        # The tool-using analysts compose `prompt | llm.bind_tools(tools)`, so
+        # this must return a Runnable. The Agent SDK runs the tool loop
+        # internally and returns a final report (no tool_calls) — LangGraph
+        # then treats the analyst as done. On failure/quota, the fallback
+        # provider's bind_tools rejoins the normal external ToolNode loop.
+        return _BoundAgentSDK(self, list(tools))
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +340,9 @@ class ClaudeAgentSDKClient(BaseLLMClient):
     # -- internal call path -------------------------------------------------- #
 
     def _build_options(self, system_prompt: Optional[str],
-                       output_format: Optional[dict] = None):
+                       output_format: Optional[dict] = None,
+                       sdk_tools: Optional[list] = None,
+                       tool_names: Optional[list] = None):
         opts: dict[str, Any] = {
             "model": self.model,
             "max_turns": 1,           # approximate a single completion
@@ -277,13 +356,22 @@ class ClaudeAgentSDKClient(BaseLLMClient):
             # SDK fall back to the ambient logged-in CLI session (Keychain) —
             # passing an empty token here is unnecessary and only muddies intent.
             opts["env"] = {OAUTH_ENV: token}
+        if sdk_tools:
+            # Register the bridged analyst tools and let the SDK run the loop
+            # internally over multiple turns (only these tools are allowed).
+            server = create_sdk_mcp_server(_MCP_SERVER_NAME, "1.0.0", tools=sdk_tools)
+            opts["mcp_servers"] = {_MCP_SERVER_NAME: server}
+            opts["allowed_tools"] = [
+                f"mcp__{_MCP_SERVER_NAME}__{n}" for n in (tool_names or [])
+            ]
+            opts["max_turns"] = _TOOL_MAX_TURNS
         if system_prompt:
             opts["system_prompt"] = system_prompt
         if output_format is not None:
             opts["output_format"] = output_format
         return ClaudeAgentOptions(**opts)
 
-    async def _query(self, prompt: str, options):
+    async def _query(self, prompt: str, options, prefer_result: bool = False):
         text_parts: list[str] = []
         result_msg = None
         async for message in _sdk.query(prompt=prompt, options=options):
@@ -319,6 +407,7 @@ class ClaudeAgentSDKClient(BaseLLMClient):
                 result_msg = message
 
         structured = None
+        text = "".join(text_parts)
         if result_msg is not None:
             if getattr(result_msg, "is_error", False):
                 raise _SDKResultError(
@@ -326,14 +415,31 @@ class ClaudeAgentSDKClient(BaseLLMClient):
                     f"api_error_status={getattr(result_msg, 'api_error_status', None)}"
                 )
             structured = getattr(result_msg, "structured_output", None)
-            if not text_parts and getattr(result_msg, "result", None):
-                text_parts.append(result_msg.result)
-        return "".join(text_parts), structured
+            final = getattr(result_msg, "result", None)
+            # In a tool loop the intermediate turns emit reasoning text before
+            # each tool call; ResultMessage.result holds the authoritative final
+            # answer, so prefer it there. For single-turn calls fall back to it
+            # only when no assistant text was streamed.
+            if final and (prefer_result or not text):
+                text = final
+        return text, structured
 
     def _invoke_raw(self, prompt: Any) -> AIMessage:
         system_prompt, user_text = _split_prompt(prompt)
         options = self._build_options(system_prompt)
         text, _ = _run_async(self._query(user_text, options))
+        return AIMessage(content=text)
+
+    def _invoke_with_tools(self, lc_tools, prompt: Any) -> AIMessage:
+        """Run the SDK's internal tool loop over the bridged analyst tools and
+        return the final report as an AIMessage (no tool_calls)."""
+        system_prompt, user_text = _split_prompt(prompt)
+        sdk_tools = _sdk_tools_from_langchain(lc_tools)
+        tool_names = [t.name for t in lc_tools]
+        options = self._build_options(
+            system_prompt, sdk_tools=sdk_tools, tool_names=tool_names
+        )
+        text, _ = _run_async(self._query(user_text, options, prefer_result=True))
         return AIMessage(content=text)
 
     def _invoke_structured(self, schema, prompt: Any):

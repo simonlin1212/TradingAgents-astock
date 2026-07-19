@@ -29,9 +29,18 @@ DEFAULT_CONFIG = {
     # When set to "claude_agent_sdk", ONLY the deep_thinking_llm nodes (Research
     # Manager / Portfolio Manager) route through the subscription. None = unchanged.
     "deep_think_provider_override": None,
+    # Same, but for the QUICK nodes (7 tool-using analysts + Bull/Bear / trader /
+    # risk debaters). Set to "claude_agent_sdk" to run those on the subscription
+    # too; combined with deep_think_provider_override this puts ALL nodes on the
+    # personal subscription. None = analysts stay on llm_provider (unchanged).
+    "quick_think_provider_override": None,
     # The Claude model id the Agent SDK uses. MUST be a real Claude model — do
     # NOT reuse deep_think_llm (default "deepseek-v4-pro" is a DeepSeek model id).
     "agent_sdk_model": "claude-opus-4-8",
+    # Claude model for the QUICK/analyst nodes when quick_think_provider_override
+    # is on. Subscription bills quota not tokens, so Opus is fine; pick a faster
+    # Claude here if you prefer snappier analyst turns.
+    "agent_sdk_quick_model": "claude-opus-4-8",
     # Fallback when the subscription call fails / hits quota. None → fall back to
     # llm_provider + deep_think_llm (a real, separately-billed provider).
     "agent_sdk_fallback_provider": None,

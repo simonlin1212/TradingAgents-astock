@@ -91,45 +91,50 @@ class TradingAgentsGraph:
         if self.callbacks:
             llm_kwargs["callbacks"] = self.callbacks
 
-        # Optional: route only the deep-thinking nodes (Research Manager /
-        # Portfolio Manager) through a personal Claude Pro/Max subscription via
-        # the Claude Agent SDK. Off by default — behaviour is unchanged when
-        # deep_think_provider_override is None.
-        if self.config.get("deep_think_provider_override") == "claude_agent_sdk":
-            # F-004 guardrail: ANTHROPIC_API_KEY outranks the subscription OAuth
-            # token and would silently bill the pay-per-token API instead of the
-            # subscription. Refuse to start rather than surprise-bill the user.
-            if os.getenv("ANTHROPIC_API_KEY"):
-                raise RuntimeError(
-                    "deep_think_provider_override=claude_agent_sdk but ANTHROPIC_API_KEY "
-                    "is set — the API key takes precedence and would silently bill the "
-                    "Anthropic API instead of your Pro/Max subscription. Unset "
-                    "ANTHROPIC_API_KEY to use the subscription, or clear the override."
-                )
-            deep_fallback_spec = {
-                "provider": self.config.get("agent_sdk_fallback_provider") or self.config["llm_provider"],
-                "model": self.config.get("agent_sdk_fallback_model") or self.config["deep_think_llm"],
-                "base_url": self.config.get("backend_url"),
-            }
-            deep_client = create_llm_client(
-                provider="claude_agent_sdk",
-                model=self.config["agent_sdk_model"],
-                base_url=self.config.get("backend_url"),
-                fallback_spec=deep_fallback_spec,
+        # Optional: route nodes through a personal Claude Pro/Max subscription
+        # via the Claude Agent SDK. `deep_think_provider_override` covers the
+        # deep nodes (Research / Portfolio Manager); `quick_think_provider_override`
+        # covers the quick nodes (7 tool-using analysts + Bull/Bear / trader /
+        # risk debaters). Both on ⇒ every node runs on the subscription. Off by
+        # default — behaviour is unchanged when both are None.
+        deep_on = self.config.get("deep_think_provider_override") == "claude_agent_sdk"
+        quick_on = self.config.get("quick_think_provider_override") == "claude_agent_sdk"
+
+        # F-004 guardrail: ANTHROPIC_API_KEY outranks the subscription OAuth token
+        # and would silently bill the pay-per-token API instead of the subscription.
+        # Refuse to start rather than surprise-bill the user.
+        if (deep_on or quick_on) and os.getenv("ANTHROPIC_API_KEY"):
+            raise RuntimeError(
+                "claude_agent_sdk override is on but ANTHROPIC_API_KEY is set — the "
+                "API key takes precedence and would silently bill the Anthropic API "
+                "instead of your Pro/Max subscription. Unset ANTHROPIC_API_KEY to use "
+                "the subscription, or clear the override."
             )
-        else:
-            deep_client = create_llm_client(
+
+        def _make_client(override_on, sdk_model_key, fallback_model_key):
+            """Build a subscription-backed client when overridden, else the normal
+            llm_provider client. Fallback rejoins the paid provider on quota/failure."""
+            if override_on:
+                fallback_spec = {
+                    "provider": self.config.get("agent_sdk_fallback_provider") or self.config["llm_provider"],
+                    "model": self.config.get("agent_sdk_fallback_model") or self.config[fallback_model_key],
+                    "base_url": self.config.get("backend_url"),
+                }
+                return create_llm_client(
+                    provider="claude_agent_sdk",
+                    model=self.config[sdk_model_key],
+                    base_url=self.config.get("backend_url"),
+                    fallback_spec=fallback_spec,
+                )
+            return create_llm_client(
                 provider=self.config["llm_provider"],
-                model=self.config["deep_think_llm"],
+                model=self.config[fallback_model_key],
                 base_url=self.config.get("backend_url"),
                 **llm_kwargs,
             )
-        quick_client = create_llm_client(
-            provider=self.config["llm_provider"],
-            model=self.config["quick_think_llm"],
-            base_url=self.config.get("backend_url"),
-            **llm_kwargs,
-        )
+
+        deep_client = _make_client(deep_on, "agent_sdk_model", "deep_think_llm")
+        quick_client = _make_client(quick_on, "agent_sdk_quick_model", "quick_think_llm")
 
         self.deep_thinking_llm = deep_client.get_llm()
         self.quick_thinking_llm = quick_client.get_llm()

@@ -191,24 +191,34 @@ def _render_llm_config() -> None:
         ),
     )
 
-    # ── 个人订阅额度（可选，仅个人自用）──────────────────────────────
-    use_sub = st.checkbox(
-        "深度节点走个人 Claude 订阅 (Agent SDK)",
-        key="deep_think_subscription",
+    # ── 个人 Claude 订阅额度（可选，仅个人自用）────────────────────────
+    _scope_labels = [
+        "关闭（走上面选的供应商）",
+        "仅深度节点（Research/Portfolio）",
+        "所有节点（含 7 个工具分析师）",
+    ]
+    _scope_values = ["off", "deep", "all"]
+    scope_idx = st.selectbox(
+        "个人 Claude 订阅覆盖 (Agent SDK)",
+        range(len(_scope_labels)),
+        format_func=lambda i: _scope_labels[i],
+        key="subscription_scope_idx",
         help=(
-            "开启后，仅 Research/Portfolio Manager 两个深度节点经 Claude Agent SDK "
-            "走你个人 Pro/Max 订阅额度；其余 7 个分析师仍走上面选的供应商。"
+            "让部分/全部节点经 Claude Agent SDK 走你个人 Pro/Max 订阅额度，"
+            "而非按 token 计费。“所有节点”含 7 个工具分析师（其工具调用已桥接到订阅）。"
             "需装 [agentsdk] 依赖，且本机 claude 已登录（或设 CLAUDE_CODE_OAUTH_TOKEN）。"
         ),
     )
-    if use_sub:
+    scope = _scope_values[scope_idx]
+    st.session_state["subscription_scope"] = scope
+    if scope != "off":
         st.session_state.setdefault("agent_sdk_model", "claude-opus-4-8")
         st.text_input(
             "订阅使用的 Claude 模型",
             key="agent_sdk_model",
             help=(
                 "必须是真实 Claude 模型 id（如 claude-opus-4-8）。"
-                "撞额度/失败时自动降级到上面选的供应商 + 深度思考模型。"
+                "撞额度/失败时自动降级到上面选的供应商 + 对应模型。"
             ),
         )
         if os.getenv("ANTHROPIC_API_KEY"):

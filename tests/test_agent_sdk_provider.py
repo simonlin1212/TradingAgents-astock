@@ -40,11 +40,22 @@ def _client_with_query(monkeypatch, text="", structured=None, fallback_spec=None
     """Build a client whose _query returns a canned (text, structured) tuple."""
     client = ClaudeAgentSDKClient("claude-opus-4-8", fallback_spec=fallback_spec)
 
-    async def fake_query(prompt, options):
+    async def fake_query(prompt, options, prefer_result=False):
         return text, structured
 
     monkeypatch.setattr(client, "_query", fake_query)
     return client
+
+
+class _FakeLangChainTool:
+    """Minimal stand-in for a LangChain StructuredTool (bridged by bind_tools)."""
+
+    name = "get_thing"
+    description = "gets a thing"
+    args_schema = None  # → _sdk_tools_from_langchain uses an empty object schema
+
+    def invoke(self, args):
+        return "thing-data"
 
 
 # --------------------------------------------------------------------------- #
@@ -76,10 +87,36 @@ def test_structured_output_parses_json_text_when_no_structured_field(monkeypatch
     assert plan.decision == "hold" and plan.confidence == 2
 
 
-def test_bind_tools_raises(monkeypatch, oauth_env):
-    client = _client_with_query(monkeypatch)
-    with pytest.raises(NotImplementedError, match="bind_tools"):
-        client.get_llm().bind_tools([object()])
+def test_bind_tools_returns_runnable_and_final_report(monkeypatch, oauth_env):
+    # bind_tools must return a Runnable (so `prompt | bound` composes) whose
+    # invoke runs the SDK tool loop and returns a final report with NO
+    # tool_calls — LangGraph then treats the analyst as done.
+    from langchain_core.runnables import Runnable
+
+    client = _client_with_query(monkeypatch, text="final report")
+    bound = client.get_llm().bind_tools([_FakeLangChainTool()])
+    assert isinstance(bound, Runnable)
+    result = bound.invoke("analyze 600519")
+    assert result.content == "final report"
+    assert result.tool_calls == []
+
+
+def test_bind_tools_falls_back_on_rate_limit(monkeypatch, oauth_env):
+    # Subscription tool loop hits quota → fall back to the fallback provider's
+    # bind_tools, which rejoins LangGraph's normal external ToolNode loop.
+    client = ClaudeAgentSDKClient(
+        "claude-opus-4-8",
+        fallback_spec={"provider": "deepseek", "model": "deepseek-v4-pro", "base_url": None},
+    )
+
+    async def boom(prompt, options, prefer_result=False):
+        raise _RateLimitHit("weekly limit reached")
+
+    monkeypatch.setattr(client, "_query", boom)
+    _install_stub_fallback(monkeypatch)
+
+    result = client.get_llm().bind_tools([_FakeLangChainTool()]).invoke("analyze")
+    assert result.content == "served by fallback tools"
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +167,12 @@ class _StubStructured:
         return self._schema(decision="fallback-buy", confidence=1)
 
 
+class _StubBoundTools:
+    def invoke(self, prompt, *a, **k):
+        from langchain_core.messages import AIMessage
+        return AIMessage(content="served by fallback tools")
+
+
 class _StubLLM:
     def invoke(self, prompt, *a, **k):
         from langchain_core.messages import AIMessage
@@ -137,6 +180,9 @@ class _StubLLM:
 
     def with_structured_output(self, schema, **k):
         return _StubStructured(schema)
+
+    def bind_tools(self, tools, **k):
+        return _StubBoundTools()
 
 
 def _install_stub_fallback(monkeypatch):
