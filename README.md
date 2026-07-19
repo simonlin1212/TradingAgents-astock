@@ -235,15 +235,25 @@ print(decision)
 
 ### 用 Max 订阅额度（可选，仅个人自用）
 
-装 `[agentsdk]` 后，可让 deep 节点走你个人 Claude Pro/Max 订阅额度：
+让**深度思考的两个节点**（Research Manager / Portfolio Manager）经 Claude Agent SDK 走你**个人 Pro/Max 订阅额度**而非按 token 计费的 API。7 个工具 Analyst 仍走你配的 API provider。
+
+#### 1. 一次性准备
 
 ```bash
-# 1. 登录你的 Pro/Max 账号并生成订阅 OAuth token
+# 装可选依赖（会顶 httpx>=0.28.1，与 mootdx 冲突 —— 建议单开一个 venv 专门用它）
+uv pip install --python .venv/bin/python -e ".[agentsdk]"
+
+# 登录你的 Pro/Max 账号，生成订阅 OAuth token
 claude setup-token
-export CLAUDE_CODE_OAUTH_TOKEN=<上一步输出>
-# 2. 确保没有 ANTHROPIC_API_KEY（会被优先、悄悄走 API 计费；启用时护栏会直接报错拦截）
+export CLAUDE_CODE_OAUTH_TOKEN=<上一步输出的 token>
+
+# 关键：清掉 ANTHROPIC_API_KEY，否则启动护栏（F-004）直接报错拦截
 unset ANTHROPIC_API_KEY
 ```
+
+> 护栏是故意的：`ANTHROPIC_API_KEY` 一旦存在会被优先、悄悄走按 token 计费的 API，让你以为在用订阅额度其实在烧钱。所以启用 override 时两者不可共存。
+
+#### 2. 开启开关（config 里 4 个键）
 
 ```python
 config = {
@@ -259,6 +269,26 @@ config = {
     "output_language": "Chinese",
 }
 ```
+
+只有 `deep_think_provider_override="claude_agent_sdk"` 生效时功能才开启；缺省 `None` 完全不碰，行为与以前一致。
+
+#### 3. 跑起来
+
+```python
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+ta = TradingAgentsGraph(config=config)
+state, decision = ta.propagate("600519", "2026-07-19")  # 贵州茅台
+print(decision)
+```
+
+CLI / Web 同理——config 里那 4 个键设好，`tradingagents`（CLI）或 `streamlit run web/launch.py`（Web）都会自动让 deep 节点走订阅。
+
+#### 4. 确认真的生效了
+
+- 日志里 Research / Portfolio Manager 两个节点确实经 Agent SDK 出结果；
+- 你的**订阅额度被消耗**（去 Claude 网页版/账户看用量），而不是 API 账单上涨；
+- 启动没被护栏拦 → 证明 `ANTHROPIC_API_KEY` 确实没共存；
+- 若撞订阅周限流，日志出现 WARNING 并自动降级到 fallback（deepseek）继续跑，不中断。
 
 ⚠️ **注意**：仅个人自用（发布成给他人用的产品须另取 Anthropic 批准）；订阅额度与网页版/Claude Code **共享**、按周动态限流、**无 SLA**，不适合有时限的定时批处理；只覆盖 Claude 模型。撞额度时会自动降级到 fallback（按 token 计费）。
 
