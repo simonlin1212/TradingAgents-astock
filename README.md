@@ -165,7 +165,7 @@ pip install -e ".[agentsdk]"
 
 > **默认必须使用 API Key**。每次分析需 30-50 次 LLM 调用。
 >
-> 例外（可选，仅个人自用）：装 `[agentsdk]` 后，可让**深度思考的两个节点**（Research/Portfolio Manager）走你**个人 Claude Pro/Max 订阅额度**而非按 token 计费的 API——见下方「用 Max 订阅额度（可选）」。7 个工具 Analyst 仍走 API。
+> 例外（可选，仅个人自用）：装 `[agentsdk]` 后，可让节点走你**个人 Claude Pro/Max 订阅额度**而非按 token 计费的 API——可只覆盖深度节点（Research/Portfolio Manager），也可**含 7 个工具分析师即全节点走订阅**，见下方「用 Max 订阅额度（可选）」。
 
 在项目根目录创建 `.env` 文件，按你选择的供应商配置：
 
@@ -258,24 +258,30 @@ unset ANTHROPIC_API_KEY
 
 > 护栏是故意的：`ANTHROPIC_API_KEY` 一旦存在会被优先、悄悄走按 token 计费的 API，让你以为在用订阅额度其实在烧钱。所以启用 override 时两者不可共存。
 
-#### 2. 开启开关（config 里 4 个键）
+#### 2. 开启开关（config）
+
+覆盖范围两档：只让深度节点走订阅，或让**全部节点（含 7 个工具分析师）**走订阅。
 
 ```python
 config = {
-    "llm_provider": "deepseek",          # 7 个工具 Analyst 仍走这个（API）
+    "llm_provider": "deepseek",          # 未被 override 的节点走这个（也是降级兜底）
     "deep_think_llm": "deepseek-v4-pro",
     "quick_think_llm": "deepseek-chat",
-    # 只让 Research/Portfolio Manager 走订阅：
+    # 深度节点（Research/Portfolio Manager）走订阅：
     "deep_think_provider_override": "claude_agent_sdk",
-    "agent_sdk_model": "claude-opus-4-8",     # 订阅用的 Claude 模型（别填 deepseek 串）
-    # 撞额度/失败自动降级（缺省回落到 llm_provider + deep_think_llm）：
+    "agent_sdk_model": "claude-opus-4-8",       # 深度节点订阅模型（别填 deepseek 串）
+    # ↓ 想让 7 个工具分析师也走订阅（= 全节点走订阅），再加这两行：
+    "quick_think_provider_override": "claude_agent_sdk",
+    "agent_sdk_quick_model": "claude-opus-4-8",  # 分析师订阅模型
+    # 撞额度/失败自动降级（缺省回落到 llm_provider + 对应模型）：
     "agent_sdk_fallback_provider": "deepseek",
     "agent_sdk_fallback_model": "deepseek-v4-pro",
     "output_language": "Chinese",
 }
 ```
 
-只有 `deep_think_provider_override="claude_agent_sdk"` 生效时功能才开启；缺省 `None` 完全不碰，行为与以前一致。
+两个 override 缺省都是 `None`，完全不碰、行为与以前一致。分析师是工具节点，
+其工具调用经 `bind_tools` 桥接到 Agent SDK 内部工具循环——所以“全节点走订阅”可用。
 
 #### 3. 跑起来
 
@@ -286,7 +292,7 @@ state, decision = ta.propagate("600519", "2026-07-19")  # 贵州茅台
 print(decision)
 ```
 
-CLI / Web 同理——config 里那 4 个键设好，`tradingagents`（CLI）或 `streamlit run web/launch.py`（Web）都会自动让 deep 节点走订阅。
+CLI / Web 同理。Web 侧栏「个人 Claude 订阅覆盖」三档：**关闭 / 仅深度节点 / 所有节点**，选「所有节点」即全走订阅。
 
 #### 4. 确认真的生效了
 

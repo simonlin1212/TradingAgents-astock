@@ -36,3 +36,12 @@ claude CLI 里 `ANTHROPIC_API_KEY` 优先级高于 `CLAUDE_CODE_OAUTH_TOKEN`,存
 ## 6. 降级封在客户端内,不外溢 graph
 
 框架自带的 free-text 兜底在**同一个 llm** 上重试,所以跨 provider 降级(F-005)必须封在适配器内(`fallback_spec` 构造时注入,`_get_fallback` 惰性建)。graph 接线只选 provider + 传配置,不含降级逻辑——避免任务边界越界。
+
+## 7. bind_tools 桥接 — 用"折叠工具循环"让工具分析师也走订阅(全节点)
+
+分析师是 LangGraph **ReAct 模式**:`chain = prompt | llm.bind_tools(tools)`,LLM 返回 `tool_calls` → 外部 `ToolNode` 执行 → 回灌 → 循环,直到 `result.tool_calls==0` 才算完成。Agent SDK 相反,是**内部自跑工具循环、只吐最终结果**。两种范式冲突,原 POC 直接让 `bind_tools` 抛错、把分析师挡在订阅外。
+- **关键洞察(不用改图)**:`bind_tools(tools)` 返回一个 `Runnable`(`_BoundAgentSDK`,必须是 Runnable 才能 `prompt | bound` 组合),其 `.invoke` 把 LangChain 工具桥接成 **Agent SDK 进程内 MCP 工具**(`create_sdk_mcp_server`+`@tool(name, desc, json_schema)`),让 SDK 内部把整段 ReAct 循环跑完,返回**没有 tool_calls 的最终报告**。LangGraph 见 0 tool_calls 即视分析师完成,外部 ToolNode 空转。**分析师的多轮外部循环被折叠进 SDK 内部循环。**
+- **工具处理器**:LangChain 工具是同步、且打网络(mootdx 等),SDK handler 是 async——必须 `await asyncio.to_thread(lc_tool.invoke, args)`,否则阻塞 SDK 的 event loop。工具异常当**数据**返给模型(`[tool error] ...`),不崩。
+- **取最终文本**:工具循环里中间轮会 emit 推理文本,不能把所有 AssistantMessage 文本拼起来当报告。`_query(prefer_result=True)` 取 `ResultMessage.result`(权威最终答);深度节点(单轮)仍用拼接文本、result 仅兜底。
+- **降级自然汇流**:订阅撞额度时 fallback provider 的 `bind_tools(tools).invoke` 返回真 `tool_calls` → **重新汇入 LangGraph 正常外部 ToolNode 循环**,无需改图。
+- **接线对称**:`quick_think_provider_override` 与 `deep_think_provider_override` 对称(`trading_graph._make_client`),护栏 F-004 对二者统一判断。两者都 on = 全节点走订阅。**2026-07-20 全节点真机跑通:7 分析师+辩论+2 深度节点 0 降级、报告全出内容。**
