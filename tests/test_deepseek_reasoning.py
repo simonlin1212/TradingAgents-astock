@@ -5,9 +5,8 @@ Two pieces verified:
 1. ``reasoning_content`` is captured on receive into the AIMessage's
    ``additional_kwargs`` and re-attached on send so DeepSeek's API
    sees the same value across turns.
-2. ``with_structured_output`` raises NotImplementedError for
-   ``deepseek-reasoner`` so the agent factories' free-text fallback
-   handles the request instead of failing at runtime.
+2. ``with_structured_output`` suppresses the incompatible ``tool_choice``
+   parameter for DeepSeek reasoning models while still binding the schema.
 """
 
 import os
@@ -115,13 +114,13 @@ class TestDeepSeekReasoningContent:
 
 
 # ---------------------------------------------------------------------------
-# deepseek-reasoner: structured output unavailable, falls through to free-text
+# DeepSeek reasoning models: schema binding without tool_choice
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 class TestDeepSeekReasonerStructuredOutput:
-    def test_with_structured_output_raises_for_reasoner(self):
+    def test_with_structured_output_suppresses_tool_choice_for_reasoner(self):
         client = DeepSeekChatOpenAI(
             model="deepseek-reasoner",
             api_key="placeholder",
@@ -132,11 +131,13 @@ class TestDeepSeekReasonerStructuredOutput:
         class _Sample(BaseModel):
             answer: str
 
-        with pytest.raises(NotImplementedError):
-            client.with_structured_output(_Sample)
+        wrapped = client.with_structured_output(_Sample)
+        first = wrapped.steps[0] if hasattr(wrapped, "steps") else wrapped
+        kwargs = getattr(first, "kwargs", {})
+        assert kwargs.get("tool_choice") is None or "tool_choice" not in kwargs
 
     def test_with_structured_output_works_for_v4(self):
-        """V4 models (non-reasoner) accept tool_choice; structured output works."""
+        """V4 models bind the schema while suppressing tool_choice."""
         client = DeepSeekChatOpenAI(
             model="deepseek-v4-flash",
             api_key="placeholder",
