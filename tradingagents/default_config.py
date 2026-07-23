@@ -31,6 +31,13 @@ DEFAULT_CONFIG = {
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "Chinese",
+    # How many days of price/indicator history the market analyst covers
+    # (the "analysis window", ending at the analysis date). Drives the
+    # look_back_days the market analyst passes to get_stock_data /
+    # get_indicators. The Web sidebar / CLI derive this from a user-picked
+    # start date (default: first day of the current month → "monthly" view);
+    # None keeps the previous behaviour (the model's own default, ~30). (#16)
+    "market_lookback_days": None,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

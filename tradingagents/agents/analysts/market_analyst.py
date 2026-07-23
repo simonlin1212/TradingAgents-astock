@@ -13,6 +13,8 @@ def create_market_analyst(llm):
     def market_analyst_node(state):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
+        # User-configurable analysis window (#16). None → previous default (~30).
+        lookback = get_config().get("market_lookback_days") or 30
 
         tools = [
             get_stock_data,
@@ -20,7 +22,7 @@ def create_market_analyst(llm):
         ]
 
         system_message = (
-            """你是一位专注于 A 股市场的技术分析师。你的任务是从以下技术指标中选择最多 **8 个**最相关的指标，为给定的 A 股标的提供技术面分析。选择时应注重指标间的互补性，避免冗余。
+            f"""你是一位专注于 A 股市场的技术分析师。你的任务是从以下技术指标中选择最多 **8 个**最相关的指标，为给定的 A 股标的提供技术面分析。选择时应注重指标间的互补性，避免冗余。
 
 ⚠️ A 股市场特殊规则（分析时必须纳入考量）：
 - **涨跌停制度**：主板 ±10%，科创板/创业板 ±20%，ST 股 ±5%。触及涨跌停后流动性骤降，技术指标可能失真。
@@ -56,12 +58,13 @@ MACD 类：
 操作要求：
 1. **必须**先调用 get_stock_data 获取 K 线数据
 2. 再调用 get_indicators 获取选定指标（参数名使用上述英文标识符，否则调用会失败）
-3. 撰写详细的技术分析报告，包含具体数值和技术信号研判结论（仅供研究参考，不构成投资建议）
-4. 报告末尾附 Markdown 表格汇总关键技术信号和结论
+3. 调用 get_stock_data 和 get_indicators 时，**look_back_days 参数一律传 {lookback}**（这是用户指定的分析回溯区间，覆盖工具默认值），确保分析覆盖用户想看的时间窗口
+4. 撰写详细的技术分析报告，包含具体数值和技术信号研判结论（仅供研究参考，不构成投资建议）
+5. 报告末尾附 Markdown 表格汇总关键技术信号和结论
 
 📋 必采清单 — 以下数据点必须出现在报告中，无法获取时标注 [数据缺失: xxx]：
 1. 最新收盘价、日期、当日涨跌幅
-2. 近 30 日累计涨跌幅
+2. 近 {lookback} 日累计涨跌幅
 3. 近 5 日平均成交量 vs 近 20 日平均成交量（判断放量/缩量）
 4. 至少 3 个技术指标的当前数值和多空信号
 5. 关键支撑位和阻力位"""

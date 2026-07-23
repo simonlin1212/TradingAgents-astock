@@ -520,6 +520,16 @@ def get_user_selections():
     )
     analysis_date = get_analysis_date()
 
+    # Step 2 (cont.): data start date → analysis look-back window (#16)
+    console.print(
+        create_question_box(
+            "Step 2b: Data Start Date",
+            "Technical analysis looks back to this date (default: first of the analysis month)",
+            analysis_date[:7] + "-01",
+        )
+    )
+    market_lookback_days = get_market_lookback_days(analysis_date)
+
     # Step 3: Output language
     console.print(
         create_question_box(
@@ -599,6 +609,7 @@ def get_user_selections():
     return {
         "ticker": selected_ticker,
         "analysis_date": analysis_date,
+        "market_lookback_days": market_lookback_days,
         "analysts": selected_analysts,
         "research_depth": selected_research_depth,
         "llm_provider": selected_llm_provider.lower(),
@@ -643,6 +654,28 @@ def get_analysis_date():
                 console.print("[red]Error: Analysis date cannot be in the future[/red]")
                 continue
             return date_str
+        except ValueError:
+            console.print(
+                "[red]Error: Invalid date format. Please use YYYY-MM-DD[/red]"
+            )
+
+
+def get_market_lookback_days(analysis_date: str) -> int:
+    """Prompt for the data start date and derive the analysis look-back window (#16).
+
+    The technical analyst covers price/indicator history from this start date up
+    to the analysis date. Default start is the first day of the analysis month
+    ("monthly" view). Returns the number of days (>= 5)."""
+    analysis_dt = datetime.datetime.strptime(analysis_date, "%Y-%m-%d").date()
+    default_start = analysis_dt.replace(day=1).strftime("%Y-%m-%d")
+    while True:
+        date_str = typer.prompt("", default=default_start)
+        try:
+            start_dt = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+            if start_dt >= analysis_dt:
+                console.print("[red]Error: start date must be before the analysis date[/red]")
+                continue
+            return max((analysis_dt - start_dt).days, 5)
         except ValueError:
             console.print(
                 "[red]Error: Invalid date format. Please use YYYY-MM-DD[/red]"
@@ -949,6 +982,7 @@ def run_analysis(checkpoint: bool = False):
     config = DEFAULT_CONFIG.copy()
     config["max_debate_rounds"] = selections["research_depth"]
     config["max_risk_discuss_rounds"] = selections["research_depth"]
+    config["market_lookback_days"] = selections.get("market_lookback_days")
     config["quick_think_llm"] = selections["shallow_thinker"]
     config["deep_think_llm"] = selections["deep_thinker"]
     config["backend_url"] = selections["backend_url"]

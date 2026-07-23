@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.2.21] — 2026-07-23
+
+新增可配置的技术分析回溯窗口 / 按月分析（#16）。无破坏性变更、无新依赖。
+
+### 新增
+- **自定义数据起始日期 / 按月分析（#16）**：此前技术分析的回溯天数由模型自行决定（工具默认 ~30 天），用户无法控制分析区间。现在：
+  - **Web 侧栏新增「数据起始日期」**（默认本月第一天）——分析区间 = 起始日期 → 分析日期，用于「按月」或自定义时段分析。
+  - **CLI 新增 Step 2b「Data Start Date」**——交互式输入起始日期（默认分析月首日）。
+  - 两端都据「起始日期 → 分析日期」算出 `market_lookback_days`（下限 5 天），写入 config。
+  - **market_analyst 读取并注入 prompt**：显式要求调用 `get_stock_data` / `get_indicators` 时 `look_back_days` 传该值，「必采清单」的「近 N 日累计涨跌幅」也随之联动。
+  - 新增 config 键 `market_lookback_days`（`default_config.py`，默认 `None` = 保持原行为，模型自选 ~30）。
+  - 感谢 @hejingchi 定位到 `get_indicators` 的 `look_back_days` 参数并提交 PR #18 的相关思路（本实现单独干净落地，未夹带 PR #18 的字体/主题改动）。
+
+### 测试
+- 新增 `tests/test_market_lookback.py`：`DEFAULT_CONFIG` 含键且默认 None、config 读取逻辑（配置 15 → 15 / None → 默认 30）、天数派生 clamp（本月首日→今日=22、起始≥分析→5、跨月=60）。
+- 独立验证（py3.12）：config set/get 流 + 派生逻辑 7 条断言全过；5 改动文件 + 测试文件 py_compile 全过；market_analyst f-string 注入渲染正确（无杂散括号）。
+
 ## [0.2.20] — 2026-07-23
 
 新增通用「OpenAI 兼容（自定义 base_url）」provider，接任意 OpenAI 兼容网关（#77 / #81）。无破坏性变更、无新依赖。

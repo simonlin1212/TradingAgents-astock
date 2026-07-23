@@ -171,6 +171,8 @@ def _build_config() -> dict:
         "news_data": "a_stock",
         "signal_data": "a_stock",
     }
+    # Analysis window (#16): start-date input in the sidebar → look-back days.
+    config["market_lookback_days"] = st.session_state.get("market_lookback_days")
     config["max_debate_rounds"] = 1
     config["max_risk_discuss_rounds"] = 1
     config["checkpoint_enabled"] = True

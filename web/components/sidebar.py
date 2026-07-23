@@ -232,6 +232,18 @@ def render_sidebar() -> None:
         key="input_date",
     )
 
+    start_date = st.date_input(
+        "数据起始日期",
+        value=trade_date.replace(day=1),   # 默认本月第一天
+        key="input_start_date",
+        help="技术分析回溯到该日期（默认本月第一天）。分析区间 = 起始日期 → 分析日期，"
+             "用于「按月」或自定义时段分析；留默认即分析当月至今。",
+    )
+    # 分析窗口天数 → market_lookback_days（下限 5 天，保证指标有意义）
+    st.session_state["market_lookback_days"] = max((trade_date - start_date).days, 5)
+    if start_date >= trade_date:
+        st.caption("⚠️ 起始日期应早于分析日期，已按最小窗口（5 天）处理。")
+
     with st.expander("⚙️ 模型配置", expanded=False):
         _render_llm_config()
 
