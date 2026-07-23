@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
+from .capabilities import get_capabilities
 from .validators import validate_model
 
 
@@ -27,8 +28,16 @@ class NormalizedChatOpenAI(ChatOpenAI):
         return normalize_content(super().invoke(input, config, **kwargs))
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
-        if method is None:
-            method = "function_calling"
+        capabilities = get_capabilities(self.model_name)
+        if capabilities.preferred_structured_method == "none":
+            raise NotImplementedError(
+                f"{self.model_name} has no structured-output method available"
+            )
+        method = method or capabilities.preferred_structured_method
+        # DeepSeek V4/reasoner and MiniMax M2.x accept the schema as a tool,
+        # but reject LangChain's function-spec ``tool_choice`` parameter.
+        if method == "function_calling" and not capabilities.supports_tool_choice:
+            kwargs.setdefault("tool_choice", None)
         return super().with_structured_output(schema, method=method, **kwargs)
 
 
@@ -60,10 +69,9 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
        fails with HTTP 400. ``_create_chat_result`` captures the field on
        receive and ``_get_request_payload`` re-attaches it on send.
 
-    2. **deepseek-reasoner has no tool_choice.** Structured output via
-       function-calling is unavailable, so we raise NotImplementedError
-       and let the agent factories fall back to free-text generation
-       (see ``tradingagents/agents/utils/structured.py``).
+    2. **DeepSeek reasoning models reject ``tool_choice``.** Their schema is
+       still bound as a tool, while the capability-aware base class suppresses
+       only the incompatible request parameter.
     """
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
@@ -94,14 +102,18 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
                 generation.message.additional_kwargs["reasoning_content"] = reasoning
         return chat_result
 
-    def with_structured_output(self, schema, *, method=None, **kwargs):
-        if self.model_name == "deepseek-reasoner":
-            raise NotImplementedError(
-                "deepseek-reasoner does not support tool_choice; structured "
-                "output is unavailable. Agent factories fall back to "
-                "free-text generation automatically."
-            )
-        return super().with_structured_output(schema, method=method, **kwargs)
+class MinimaxChatOpenAI(NormalizedChatOpenAI):
+    """MiniMax M2.x adapter.
+
+    M2.x embeds reasoning in ``<think>`` blocks by default.  The provider's
+    ``reasoning_split`` request flag keeps that internal trace out of the
+    user-facing content that downstream agents store and render.
+    """
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        payload.setdefault("reasoning_split", True)
+        return payload
 
 # Kwargs forwarded from user config to ChatOpenAI
 _PASSTHROUGH_KWARGS = (
@@ -206,7 +218,12 @@ class OpenAIClient(BaseLLMClient):
 
         # DeepSeek's thinking-mode quirks live in their own subclass so the
         # base NormalizedChatOpenAI stays free of provider-specific branches.
-        chat_cls = DeepSeekChatOpenAI if self.provider == "deepseek" else NormalizedChatOpenAI
+        if self.provider == "deepseek":
+            chat_cls = DeepSeekChatOpenAI
+        elif self.provider == "minimax":
+            chat_cls = MinimaxChatOpenAI
+        else:
+            chat_cls = NormalizedChatOpenAI
         return chat_cls(**llm_kwargs)
 
     def validate_model(self) -> bool:
