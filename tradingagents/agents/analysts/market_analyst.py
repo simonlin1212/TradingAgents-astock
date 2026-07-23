@@ -3,6 +3,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_indicators,
     get_language_instruction,
+    get_northbound_flow,
     get_stock_data,
 )
 from tradingagents.dataflows.config import get_config
@@ -16,6 +17,7 @@ def create_market_analyst(llm):
 
         tools = [
             get_stock_data,
+            get_northbound_flow,
             get_indicators,
         ]
 
@@ -55,16 +57,18 @@ MACD 类：
 
 操作要求：
 1. **必须**先调用 get_stock_data 获取 K 线数据
-2. 再调用 get_indicators 获取选定指标（参数名使用上述英文标识符，否则调用会失败）
-3. 撰写详细的技术分析报告，包含具体数值和技术信号研判结论（仅供研究参考，不构成投资建议）
-4. 报告末尾附 Markdown 表格汇总关键技术信号和结论
+2. 调用 get_northbound_flow(curr_date, include_history=True) 获取当日北向资金净流入/流出及历史缓存趋势
+3. 再调用 get_indicators 获取选定指标（参数名使用上述英文标识符，否则调用会失败）
+4. 撰写详细的技术分析报告，包含具体数值和技术信号研判结论（仅供研究参考，不构成投资建议）
+5. 报告末尾附 Markdown 表格汇总关键技术信号和结论
 
 📋 必采清单 — 以下数据点必须出现在报告中，无法获取时标注 [数据缺失: xxx]：
 1. 最新收盘价、日期、当日涨跌幅
 2. 近 30 日累计涨跌幅
 3. 近 5 日平均成交量 vs 近 20 日平均成交量（判断放量/缩量）
 4. 至少 3 个技术指标的当前数值和多空信号
-5. 关键支撑位和阻力位"""
+5. 关键支撑位和阻力位
+6. 当日北向资金净流入/流出金额"""
             + get_language_instruction()
         )
 

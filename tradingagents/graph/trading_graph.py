@@ -25,6 +25,12 @@ from tradingagents.agents.utils.agent_states import (
     RiskDebateState,
 )
 from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.missing_data import (
+    attach_missing_data_snapshot,
+    mark_resolved_tasks_consumed,
+    make_tool_call_recorder,
+    reset_missing_tasks_for_run,
+)
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
@@ -169,13 +175,16 @@ class TradingAgentsGraph:
                     get_stock_data,
                     # Technical indicators
                     get_indicators,
-                ]
+                    get_northbound_flow,
+                ],
+                wrap_tool_call=make_tool_call_recorder("market"),
             ),
             "social": ToolNode(
                 [
                     # News tools for social media analysis
                     get_news,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("social"),
             ),
             "news": ToolNode(
                 [
@@ -183,7 +192,8 @@ class TradingAgentsGraph:
                     get_news,
                     get_global_news,
                     get_insider_transactions,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("news"),
             ),
             "fundamentals": ToolNode(
                 [
@@ -193,13 +203,15 @@ class TradingAgentsGraph:
                     get_income_statement,
                     get_profit_forecast,
                     get_industry_comparison,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("fundamentals"),
             ),
             "policy": ToolNode(
                 [
                     get_news,
                     get_global_news,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("policy"),
             ),
             "hot_money": ToolNode(
                 [
@@ -212,7 +224,8 @@ class TradingAgentsGraph:
                     get_fund_flow,
                     get_dragon_tiger_board,
                     get_industry_comparison,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("hot_money"),
             ),
             "lockup": ToolNode(
                 [
@@ -220,7 +233,8 @@ class TradingAgentsGraph:
                     get_news,
                     get_fundamentals,
                     get_lockup_expiry,
-                ]
+                ],
+                wrap_tool_call=make_tool_call_recorder("lockup"),
             ),
         }
 
@@ -360,6 +374,7 @@ class TradingAgentsGraph:
 
         # Initialize state only for fresh runs. Passing a new initial state to
         # LangGraph would start a new run and replay completed nodes.
+        reset_missing_tasks_for_run(company_name, str(trade_date))
         past_context = self.memory_log.get_past_context(company_name)
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date, past_context=past_context
@@ -368,10 +383,12 @@ class TradingAgentsGraph:
 
     def finalize_graph_run(self, company_name, trade_date, final_state):
         """Persist a completed run and clear its checkpoint."""
+        attach_missing_data_snapshot(final_state, company_name, str(trade_date))
         self.curr_state = final_state
 
         # Log state to disk.
         self._log_state(trade_date, final_state)
+        mark_resolved_tasks_consumed(company_name, str(trade_date))
 
         # Store decision for deferred reflection on the next same-ticker run.
         self.memory_log.store_decision(
@@ -429,6 +446,12 @@ class TradingAgentsGraph:
             "policy_report": final_state.get("policy_report", ""),
             "hot_money_report": final_state.get("hot_money_report", ""),
             "lockup_report": final_state.get("lockup_report", ""),
+            "data_quality_summary": final_state.get("data_quality_summary", ""),
+            "missing_data_tasks": final_state.get("missing_data_tasks", []),
+            "missing_data_complete": final_state.get("missing_data_complete", True),
+            "missing_data_resolved_count": final_state.get("missing_data_resolved_count", 0),
+            "missing_data_requires_reanalysis": final_state.get("missing_data_requires_reanalysis", False),
+            "missing_data_updated_at": final_state.get("missing_data_updated_at"),
             "investment_debate_state": {
                 "bull_history": final_state["investment_debate_state"]["bull_history"],
                 "bear_history": final_state["investment_debate_state"]["bear_history"],
