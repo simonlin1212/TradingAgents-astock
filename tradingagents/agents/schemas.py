@@ -112,10 +112,12 @@ class TraderProposal(BaseModel):
     The trader reads the Research Manager's investment plan and the analyst
     reports, then states a direction and the reasoning behind it.
 
-    This default variant deliberately carries **no executable price levels**
-    (entry / stop-loss / sizing).  Those live in
-    :class:`TraderProposalWithLevels`, which is opt-in via the
-    ``enable_execution_levels`` config flag.  See that class for why.
+    It deliberately carries **no executable price levels** — no entry price,
+    no stop-loss, no position size. This project is a research and education
+    implementation of the upstream TradingAgents framework, and concrete trade
+    levels for a named security are what turn a research tool into an
+    investment-advisory product. The capability is not shipped here; a
+    downstream fork that wants it can add it under its own responsibility.
     """
 
     action: TraderAction = Field(
@@ -130,37 +132,6 @@ class TraderProposal(BaseModel):
     )
 
 
-class TraderProposalWithLevels(TraderProposal):
-    """Opt-in variant that additionally asks for executable price levels.
-
-    Only used when ``enable_execution_levels`` is True in the config. It is
-    off by default: this project is a research/education implementation of
-    the upstream TradingAgents framework, and concrete entry / stop-loss /
-    position-size levels for a named security are exactly the kind of output
-    that turns a research tool into an investment-advisory product. Operators
-    who turn this on are responsible for how the output is used and for any
-    licensing their jurisdiction requires.
-    """
-
-    entry_price: Optional[float] = Field(
-        default=None,
-        description="Optional entry price target in the instrument's quote currency.",
-    )
-    stop_loss: Optional[float] = Field(
-        default=None,
-        description="Optional stop-loss price in the instrument's quote currency.",
-    )
-    position_sizing: Optional[str] = Field(
-        default=None,
-        description="Optional sizing guidance, e.g. '5% of portfolio'.",
-    )
-
-
-def trader_proposal_model(enable_execution_levels: bool = False) -> type[TraderProposal]:
-    """Pick the Trader schema matching the ``enable_execution_levels`` flag."""
-    return TraderProposalWithLevels if enable_execution_levels else TraderProposal
-
-
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
 
@@ -168,26 +139,13 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
     preserved for backward compatibility with the analyst stop-signal text
     and any external code that greps for it.
     """
-    parts = [
+    return "\n".join([
         f"**Action**: {proposal.action.value}",
         "",
         f"**Reasoning**: {proposal.reasoning}",
-    ]
-    # getattr: the default TraderProposal has no level fields at all.
-    entry_price = getattr(proposal, "entry_price", None)
-    stop_loss = getattr(proposal, "stop_loss", None)
-    position_sizing = getattr(proposal, "position_sizing", None)
-    if entry_price is not None:
-        parts.extend(["", f"**Entry Price**: {entry_price}"])
-    if stop_loss is not None:
-        parts.extend(["", f"**Stop Loss**: {stop_loss}"])
-    if position_sizing:
-        parts.extend(["", f"**Position Sizing**: {position_sizing}"])
-    parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
     ])
-    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +160,9 @@ class PortfolioDecision(BaseModel):
     extraction pass is required. Field descriptions double as the model's
     output instructions, so the prompt body only needs to convey context and
     the rating-scale guidance.
+
+    Like :class:`TraderProposal`, this carries no price target and no other
+    executable level — see that class for why.
     """
 
     rating: PortfolioRating = Field(
@@ -230,33 +191,6 @@ class PortfolioDecision(BaseModel):
     )
 
 
-class PortfolioDecisionWithTarget(PortfolioDecision):
-    """Opt-in variant that additionally asks for a price target.
-
-    Mirrors :class:`TraderProposalWithLevels` — gated behind the same
-    ``enable_execution_levels`` config flag, off by default. See that class
-    for the rationale.
-    """
-
-    executive_summary: str = Field(
-        description=(
-            "A concise action plan covering entry strategy, position sizing, "
-            "key risk levels, and time horizon. Two to four sentences."
-        ),
-    )
-    price_target: Optional[float] = Field(
-        default=None,
-        description="Optional target price in the instrument's quote currency.",
-    )
-
-
-def portfolio_decision_model(
-    enable_execution_levels: bool = False,
-) -> type[PortfolioDecision]:
-    """Pick the Portfolio Manager schema matching the ``enable_execution_levels`` flag."""
-    return PortfolioDecisionWithTarget if enable_execution_levels else PortfolioDecision
-
-
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
 
@@ -272,10 +206,6 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
     ]
-    # getattr: the default PortfolioDecision has no price_target field at all.
-    price_target = getattr(decision, "price_target", None)
-    if price_target is not None:
-        parts.extend(["", f"**Price Target**: {price_target}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)

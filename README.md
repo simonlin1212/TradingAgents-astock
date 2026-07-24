@@ -288,7 +288,6 @@ streamlit run web/app.py
 | `backend_url` | `None` | 自定义 API 端点 / 第三方中转网关。可在 Web UI 侧边栏填写，或用 `.env` 的 `BACKEND_URL`；方便国内通过代理访问 Claude / OpenAI |
 | `output_language` | `"Chinese"` | 报告输出语言（内部辩论始终英文） |
 | `market_lookback_days` | `None` | 技术分析回溯天数（分析区间 = 起始日期 → 分析日期）。Web/CLI 由「数据起始日期」自动算出；`None` = 模型自选（约 30 天）。#16 |
-| `enable_execution_levels` | `False` | **默认关闭。** 关闭时 Trader / Portfolio Manager 只给方向与理由，不产出建仓价 / 止损位 / 仓位 / 目标价。开启后才输出这些可执行价位——是否开启由使用者自行决定并自担责任，详见[项目定位](#项目定位)。 |
 | `max_debate_rounds` | `1` | Bull vs Bear 辩论轮数 |
 | `max_risk_discuss_rounds` | `1` | 风险三方辩论轮数 |
 | `data_vendors` | 全部 `"a_stock"` | 数据供应商路由 |
@@ -411,7 +410,7 @@ TradingAgents-Astock/
 - **它是什么**：[TradingAgents 论文](https://arxiv.org/abs/2412.20138)（TauricResearch）多 Agent 架构的 A 股工程实现，用于研究与教学——研究多 Agent 辩论在金融文本上的行为、A 股数据源如何接入、结构化输出如何落地。
 - **它不是什么**：不是投资顾问、不是荐股软件、不提供任何投资服务。本仓库不发布针对具体证券的分析报告、评级或买卖建议；`examples/` 下只有可自行运行的脚本，没有任何预生成的个股结论。
 - **模型和数据都是你自己的**：你配置自己的 LLM API key，在自己的机器上运行，产出的内容归你所有、由你判断、由你负责。项目本身不托管服务、不代为分析、不接触你的运行结果。
-- **默认不产出可执行价位**：`enable_execution_levels` 默认为 `False`，Trader 与 Portfolio Manager 只给方向与理由，不给建仓价 / 止损位 / 仓位 / 目标价。要打开是使用者的决定，使用者需自行承担相应责任、并自行确认所在司法辖区的资质要求。
+- **不产出可执行价位**：框架内**没有**建仓价 / 止损位 / 仓位 / 目标价这类输出——不是默认关闭，是代码里就没有。Trader 与 Portfolio Manager 只给方向、评级与理由。需要这类能力的使用者可以自行 fork 添加（Apache-2.0 允许），并自行承担相应责任、自行确认所在司法辖区的资质要求。
 
 > **⚠️ 免责声明**
 >

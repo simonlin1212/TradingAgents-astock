@@ -10,7 +10,7 @@ back gracefully to free-text generation.
 
 from __future__ import annotations
 
-from tradingagents.agents.schemas import portfolio_decision_model, render_pm_decision
+from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
@@ -21,20 +21,16 @@ from tradingagents.agents.utils.structured import (
 )
 
 
-def create_portfolio_manager(llm, enable_execution_levels: bool = False):
-    structured_llm = bind_structured(
-        llm, portfolio_decision_model(enable_execution_levels), "Portfolio Manager"
-    )
-    # Mirrors the Trader: the schema alone cannot stop the model from putting
-    # levels into the prose fields, so say it in the prompt too.
-    levels_rule = (
-        ""
-        if enable_execution_levels
-        else (
-            "\n- Do NOT state entry prices, stop-loss levels, target prices or "
-            "position sizes for this security; give the rating and the reasoning."
-        )
-    )
+# Mirrors the Trader: the schema alone cannot stop the model from putting
+# price levels into the prose fields, so the prompt says it explicitly too.
+_NO_LEVELS_RULE = (
+    "\n- Do NOT state entry prices, stop-loss levels, target prices or "
+    "position sizes for this security; give the rating and the reasoning."
+)
+
+
+def create_portfolio_manager(llm):
+    structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
@@ -83,7 +79,7 @@ def create_portfolio_manager(llm, enable_execution_levels: bool = False):
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.{levels_rule}{get_language_instruction()}"""
+Be decisive and ground every conclusion in specific evidence from the analysts.{_NO_LEVELS_RULE}{get_language_instruction()}"""
 
         final_trade_decision = invoke_structured_or_freetext(
             structured_llm,

@@ -8,14 +8,15 @@ Breaking changes within the 0.x line are called out explicitly.
 
 ## [0.3.0] — 2026-07-24
 
-明确项目定位为「框架的工程实现与研究复现」，并把可执行价位改为默认关闭。**有破坏性变更**（见下）。
+明确项目定位为「框架的工程实现与研究复现」，并**移除可执行价位相关能力**。**有破坏性变更**（见下）。
 
-### 变更（破坏性）
-- **`enable_execution_levels` 新增，默认 `False`**：默认情况下 Trader 与 Portfolio Manager 只输出方向 / 评级与理由，**不再产出建仓价、止损位、仓位、目标价**。
-  - Schema 拆分：`TraderProposal`（默认，无价位）/ `TraderProposalWithLevels`（opt-in）；`PortfolioDecision`（默认，无目标价）/ `PortfolioDecisionWithTarget`（opt-in）。用 `trader_proposal_model()` / `portfolio_decision_model()` 按开关取用。
-  - 提示词同步收紧：光删字段挡不住模型把价位写进散文字段，因此系统提示与 `executive_summary` / `reasoning` 的字段描述都显式要求不给价位。
-  - 渲染函数改用 `getattr`，两种变体都能渲染，下游 markdown 格式不变。
-  - **升级影响**：依赖 `TraderProposal.entry_price` 等字段的下游代码，需改用 `*WithLevels` 变体，或在 config 里设 `enable_execution_levels: True`。
+### 移除（破坏性）
+- **可执行价位能力整体删除**：Trader 与 Portfolio Manager 现在只输出方向 / 评级与理由，框架内**不再存在**建仓价、止损位、仓位、目标价这类输出。
+  - 删除字段：`TraderProposal.entry_price` / `.stop_loss` / `.position_sizing`、`PortfolioDecision.price_target`。
+  - 提示词同步收紧：仅删字段挡不住模型把价位写进散文字段，因此系统提示与 `executive_summary` / `reasoning` 的字段描述都显式要求不给价位。
+  - 渲染函数不再输出 `**Entry Price**` / `**Stop Loss**` / `**Position Sizing**` / `**Price Target**` 四节；其余 markdown 格式不变。
+  - **这是删除而不是开关**——不提供 opt-in 配置项。需要这类能力的使用者可自行 fork 添加（Apache-2.0 允许），并自行承担相应责任。
+  - **升级影响**：依赖 `TraderProposal.entry_price` 等字段的下游代码需自行调整。
 - **`ResearchPlan.strategic_actions`** 的字段描述去掉「including position sizing guidance」。
 
 ### 移除

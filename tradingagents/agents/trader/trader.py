@@ -6,30 +6,23 @@ import functools
 
 from langchain_core.messages import AIMessage
 
-from tradingagents.agents.schemas import render_trader_proposal, trader_proposal_model
+from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
 from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
 
-# Instruction appended when execution levels are off (the default). Keeps the
-# model from re-introducing entry/stop/size levels in the free-text reasoning,
-# which the schema alone cannot prevent.
+# The schema alone cannot stop the model from putting price levels into the
+# free-text reasoning field, so the prompt says it explicitly too.
 _NO_LEVELS_INSTRUCTION = (
     "Explain the reasoning behind the direction. Do NOT state entry prices, "
     "stop-loss levels, target prices or position sizes for this security."
 )
-_LEVELS_INSTRUCTION = "Be specific about entry price, stop loss, and position sizing."
 
 
-def create_trader(llm, enable_execution_levels: bool = False):
-    structured_llm = bind_structured(
-        llm, trader_proposal_model(enable_execution_levels), "Trader"
-    )
-    levels_instruction = (
-        _LEVELS_INSTRUCTION if enable_execution_levels else _NO_LEVELS_INSTRUCTION
-    )
+def create_trader(llm):
+    structured_llm = bind_structured(llm, TraderProposal, "Trader")
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]
@@ -63,7 +56,7 @@ def create_trader(llm, enable_execution_levels: bool = False):
                     "- Minimum lot: 100 shares (main board) or 200 shares (STAR/ChiNext)\n"
                     "- Trading hours: 09:30-11:30, 13:00-15:00 Beijing time\n"
                     "Anchor your reasoning in the analysts' reports and the research plan. "
-                    f"{levels_instruction} "
+                    f"{_NO_LEVELS_INSTRUCTION} "
                     "（以上参数仅供技术研究参考，不构成投资建议）"
                 ),
             },

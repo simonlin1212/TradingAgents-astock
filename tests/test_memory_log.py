@@ -5,12 +5,7 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 
 from tradingagents.agents.utils.memory import TradingMemoryLog
-from tradingagents.agents.schemas import (
-    PortfolioDecision,
-    PortfolioDecisionWithTarget,
-    PortfolioRating,
-    portfolio_decision_model,
-)
+from tradingagents.agents.schemas import PortfolioDecision, PortfolioRating
 from tradingagents.graph.reflection import Reflector
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.propagation import Propagator
@@ -617,21 +612,21 @@ class TestPortfolioManagerInjection:
         downstream consumers (memory log, signal processor, CLI display)
         can parse without any extra LLM call."""
         captured = {}
-        decision = PortfolioDecisionWithTarget(
+        decision = PortfolioDecision(
             rating=PortfolioRating.OVERWEIGHT,
             executive_summary="Build position gradually over the next two weeks.",
             investment_thesis="AI capex cycle remains intact; institutional flows constructive.",
-            price_target=215.0,
             time_horizon="3-6 months",
         )
         llm = _structured_pm_llm(captured, decision)
-        pm_node = create_portfolio_manager(llm, enable_execution_levels=True)
+        pm_node = create_portfolio_manager(llm)
         result = pm_node(_make_pm_state())
         md = result["final_trade_decision"]
         assert "**Rating**: Overweight" in md
         assert "**Executive Summary**: Build position gradually" in md
         assert "**Investment Thesis**: AI capex cycle" in md
-        assert "**Price Target**: 215.0" in md
+        # 框架不产出目标价——渲染里永远不该出现这一节。
+        assert "Price Target" not in md
         assert "**Time Horizon**: 3-6 months" in md
 
     def test_pm_falls_back_to_freetext_when_structured_unavailable(self):
