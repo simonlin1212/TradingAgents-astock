@@ -55,6 +55,50 @@ from .reflection import Reflector
 from .signal_processing import SignalProcessor
 
 
+def _normalize_yfinance_ticker(ticker: str) -> str:
+    """Return the Yahoo Finance symbol for a ticker used by the graph.
+
+    A-stock decisions are stored with their six-digit code (for example
+    ``600519``), while Yahoo Finance requires an exchange suffix for mainland
+    China listings (``600519.SS``).  Without the suffix ``Ticker.history``
+    usually returns an empty frame, so deferred memory outcomes remain pending
+    indefinitely.  Common A-share prefixes/suffixes are normalized as well;
+    non-A-share symbols remain unchanged so the graph remains usable for other
+    markets too.
+    """
+    symbol = str(ticker).strip().upper()
+
+    # The A-stock layer accepts SH/SZ/BJ prefixes and uses .SH for Shanghai,
+    # whereas Yahoo uses .SS.  Normalize those forms before handling bare
+    # six-digit codes.
+    if (
+        len(symbol) == 9
+        and symbol[:6].isdigit()
+        and symbol[6:] in (".SH", ".SZ", ".BJ")
+    ):
+        code, exchange = symbol[:6], symbol[7:]
+        return f"{code}.{('SS' if exchange == 'SH' else exchange)}"
+    if (
+        len(symbol) == 8
+        and symbol[:2] in ("SH", "SZ", "BJ")
+        and symbol[2:].isdigit()
+    ):
+        code, exchange = symbol[2:], symbol[:2]
+        return f"{code}.{('SS' if exchange == 'SH' else exchange)}"
+
+    if len(symbol) != 6 or not symbol.isdigit():
+        return symbol
+
+    # Shanghai-listed A shares, B shares and ETFs use the .SS suffix on Yahoo.
+    if symbol.startswith(("5", "6", "9")):
+        return f"{symbol}.SS"
+    # Beijing-listed symbols are also six digits and Yahoo uses .BJ.
+    if symbol.startswith(("4", "8")):
+        return f"{symbol}.BJ"
+    # Shenzhen-listed stocks (000/001/002/003/300/301, etc.).
+    return f"{symbol}.SZ"
+
+
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
 
@@ -238,7 +282,9 @@ class TradingAgentsGraph:
             end = start + timedelta(days=holding_days + 7)  # buffer for weekends/holidays
             end_str = end.strftime("%Y-%m-%d")
 
-            stock = yf.Ticker(ticker).history(start=trade_date, end=end_str)
+            stock = yf.Ticker(_normalize_yfinance_ticker(ticker)).history(
+                start=trade_date, end=end_str
+            )
             benchmark = yf.Ticker("000300.SS").history(start=trade_date, end=end_str)
 
             if len(stock) < 2 or len(benchmark) < 2:
