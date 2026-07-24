@@ -17,8 +17,10 @@ from tradingagents.agents.schemas import (
     ResearchPlan,
     TraderAction,
     TraderProposal,
+    TraderProposalWithLevels,
     render_research_plan,
     render_trader_proposal,
+    trader_proposal_model,
 )
 from tradingagents.agents.trader.trader import create_trader
 
@@ -40,7 +42,7 @@ class TestRenderTraderProposal:
         assert "FINAL TRANSACTION PROPOSAL: **HOLD**" in md
 
     def test_optional_fields_included_when_present(self):
-        p = TraderProposal(
+        p = TraderProposalWithLevels(
             action=TraderAction.BUY,
             reasoning="Strong technicals + fundamentals.",
             entry_price=189.5,
@@ -118,10 +120,47 @@ def _structured_trader_llm(captured: dict, proposal: TraderProposal | None = Non
 
 
 @pytest.mark.unit
+class TestExecutionLevelsFlag:
+    """Execution levels (entry / stop-loss / sizing) are opt-in, off by default."""
+
+    def test_default_schema_has_no_level_fields(self):
+        fields = trader_proposal_model().model_fields
+        assert "action" in fields and "reasoning" in fields
+        for f in ("entry_price", "stop_loss", "position_sizing"):
+            assert f not in fields
+
+    def test_enabled_schema_has_level_fields(self):
+        fields = trader_proposal_model(True).model_fields
+        for f in ("entry_price", "stop_loss", "position_sizing"):
+            assert f in fields
+
+    def test_default_prompt_forbids_levels(self):
+        captured = {}
+        trader = create_trader(_structured_trader_llm(captured))
+        trader(_make_trader_state())
+        system = next(m["content"] for m in captured["prompt"] if m["role"] == "system")
+        assert "Do NOT state entry prices" in system
+        assert "Be specific about entry price" not in system
+
+    def test_enabled_prompt_asks_for_levels(self):
+        captured = {}
+        trader = create_trader(_structured_trader_llm(captured), enable_execution_levels=True)
+        trader(_make_trader_state())
+        system = next(m["content"] for m in captured["prompt"] if m["role"] == "system")
+        assert "Be specific about entry price" in system
+
+    def test_render_omits_levels_for_default_proposal(self):
+        p = TraderProposal(action=TraderAction.BUY, reasoning="Trend intact.")
+        md = render_trader_proposal(p)
+        for label in ("Entry Price", "Stop Loss", "Position Sizing"):
+            assert label not in md
+
+
+@pytest.mark.unit
 class TestTraderAgent:
     def test_structured_path_produces_rendered_markdown(self):
         captured = {}
-        proposal = TraderProposal(
+        proposal = TraderProposalWithLevels(
             action=TraderAction.BUY,
             reasoning="AI capex cycle intact; institutional flows constructive.",
             entry_price=189.5,
@@ -129,7 +168,7 @@ class TestTraderAgent:
             position_sizing="6% of portfolio",
         )
         llm = _structured_trader_llm(captured, proposal)
-        trader = create_trader(llm)
+        trader = create_trader(llm, enable_execution_levels=True)
         result = trader(_make_trader_state())
         plan = result["trader_investment_plan"]
         assert "**Action**: Buy" in plan

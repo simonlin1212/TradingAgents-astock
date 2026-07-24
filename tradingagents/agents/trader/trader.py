@@ -6,16 +6,30 @@ import functools
 
 from langchain_core.messages import AIMessage
 
-from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
+from tradingagents.agents.schemas import render_trader_proposal, trader_proposal_model
 from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
 
+# Instruction appended when execution levels are off (the default). Keeps the
+# model from re-introducing entry/stop/size levels in the free-text reasoning,
+# which the schema alone cannot prevent.
+_NO_LEVELS_INSTRUCTION = (
+    "Explain the reasoning behind the direction. Do NOT state entry prices, "
+    "stop-loss levels, target prices or position sizes for this security."
+)
+_LEVELS_INSTRUCTION = "Be specific about entry price, stop loss, and position sizing."
 
-def create_trader(llm):
-    structured_llm = bind_structured(llm, TraderProposal, "Trader")
+
+def create_trader(llm, enable_execution_levels: bool = False):
+    structured_llm = bind_structured(
+        llm, trader_proposal_model(enable_execution_levels), "Trader"
+    )
+    levels_instruction = (
+        _LEVELS_INSTRUCTION if enable_execution_levels else _NO_LEVELS_INSTRUCTION
+    )
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]
@@ -42,14 +56,14 @@ def create_trader(llm):
                 "role": "system",
                 "content": (
                     "You are a trading agent specialising in A-share (China mainland) stocks. "
-                    "Translate the Research Manager's investment plan into a concrete, executable "
-                    "transaction proposal. You must factor in A-stock trading constraints:\n"
+                    "Translate the Research Manager's investment plan into a structured "
+                    "transaction view. You must factor in A-stock trading constraints:\n"
                     "- T+1 settlement: shares bought today cannot be sold until the next trading day\n"
                     "- Daily price limits: main board ±10%, STAR/ChiNext ±20%, ST stocks ±5%\n"
                     "- Minimum lot: 100 shares (main board) or 200 shares (STAR/ChiNext)\n"
                     "- Trading hours: 09:30-11:30, 13:00-15:00 Beijing time\n"
                     "Anchor your reasoning in the analysts' reports and the research plan. "
-                    "Be specific about entry price, stop loss, and position sizing. "
+                    f"{levels_instruction} "
                     "（以上参数仅供技术研究参考，不构成投资建议）"
                 ),
             },
@@ -62,7 +76,7 @@ def create_trader(llm):
                     f"{instrument_context}\n\n"
                     f"Proposed Investment Plan:\n{investment_plan}\n\n"
                     + (f"Additional A-Stock Analyst Context:\n{astock_context}\n\n" if astock_context else "")
-                    + "Leverage these insights to craft a precise transaction proposal."
+                    + "Leverage these insights to craft the transaction view."
                     + get_language_instruction()
                 ),
             },

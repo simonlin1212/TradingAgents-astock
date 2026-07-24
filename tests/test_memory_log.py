@@ -5,7 +5,12 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 
 from tradingagents.agents.utils.memory import TradingMemoryLog
-from tradingagents.agents.schemas import PortfolioDecision, PortfolioRating
+from tradingagents.agents.schemas import (
+    PortfolioDecision,
+    PortfolioDecisionWithTarget,
+    PortfolioRating,
+    portfolio_decision_model,
+)
 from tradingagents.graph.reflection import Reflector
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.propagation import Propagator
@@ -612,7 +617,7 @@ class TestPortfolioManagerInjection:
         downstream consumers (memory log, signal processor, CLI display)
         can parse without any extra LLM call."""
         captured = {}
-        decision = PortfolioDecision(
+        decision = PortfolioDecisionWithTarget(
             rating=PortfolioRating.OVERWEIGHT,
             executive_summary="Build position gradually over the next two weeks.",
             investment_thesis="AI capex cycle remains intact; institutional flows constructive.",
@@ -620,7 +625,7 @@ class TestPortfolioManagerInjection:
             time_horizon="3-6 months",
         )
         llm = _structured_pm_llm(captured, decision)
-        pm_node = create_portfolio_manager(llm)
+        pm_node = create_portfolio_manager(llm, enable_execution_levels=True)
         result = pm_node(_make_pm_state())
         md = result["final_trade_decision"]
         assert "**Rating**: Overweight" in md

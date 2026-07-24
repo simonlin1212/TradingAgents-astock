@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tradingagents-astock"
-version = "0.2.21"
+version = "0.3.0"
 description = "A股多Agent投研框架 — 基于 TradingAgents 深度特化"
 readme = "README.md"
 requires-python = ">=3.10"

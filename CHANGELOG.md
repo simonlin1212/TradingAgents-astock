@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.3.0] — 2026-07-24
+
+明确项目定位为「框架的工程实现与研究复现」，并把可执行价位改为默认关闭。**有破坏性变更**（见下）。
+
+### 变更（破坏性）
+- **`enable_execution_levels` 新增，默认 `False`**：默认情况下 Trader 与 Portfolio Manager 只输出方向 / 评级与理由，**不再产出建仓价、止损位、仓位、目标价**。
+  - Schema 拆分：`TraderProposal`（默认，无价位）/ `TraderProposalWithLevels`（opt-in）；`PortfolioDecision`（默认，无目标价）/ `PortfolioDecisionWithTarget`（opt-in）。用 `trader_proposal_model()` / `portfolio_decision_model()` 按开关取用。
+  - 提示词同步收紧：光删字段挡不住模型把价位写进散文字段，因此系统提示与 `executive_summary` / `reasoning` 的字段描述都显式要求不给价位。
+  - 渲染函数改用 `getattr`，两种变体都能渲染，下游 markdown 格式不变。
+  - **升级影响**：依赖 `TraderProposal.entry_price` 等字段的下游代码，需改用 `*WithLevels` 变体，或在 config 里设 `enable_execution_levels: True`。
+- **`ResearchPlan.strategic_actions`** 的字段描述去掉「including position sizing guidance」。
+
+### 移除
+- **`examples/cases/` 下的 3 份个股分析报告**（含具体建仓价 / 止损 / 目标价）。本仓库不再随代码分发针对具体证券的分析报告或评级结论；`examples/run_cases.py` 保留为可自行运行的脚本，运行结果由使用者自行保管。
+- `DEV_LOG.md` / `CHANGES_FROM_UPSTREAM.md` 的 E2E 记录改为脱敏样本，只保留工程指标（耗时 / AI message 数 / 链路通过），移除个股评级与分析结论。
+
+### 文档
+- README 新增「项目定位」章节：说明这是 [arXiv 2412.20138](https://arxiv.org/abs/2412.20138) 框架的工程实现，用于研究与教学；不提供投资服务；模型与数据由使用者自备、产出归使用者所有。
+
+### 测试
+- 新增 `TestExecutionLevelsFlag`：锁定「默认 schema 无价位字段 / 开启后有 / 默认提示词禁止给价位 / 开启后要求给价位 / 默认渲染不含价位」五条。
+- 全量 164 passed + 48 subtests passed。
+
 ## [0.2.21] — 2026-07-23
 
 新增可配置的技术分析回溯窗口 / 按月分析（#16）。无破坏性变更、无新依赖。

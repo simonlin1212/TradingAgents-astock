@@ -38,6 +38,13 @@ DEFAULT_CONFIG = {
     # start date (default: first day of the current month → "monthly" view);
     # None keeps the previous behaviour (the model's own default, ~30). (#16)
     "market_lookback_days": None,
+    # Executable price levels (entry / stop-loss / position size / price target).
+    # OFF by default: this project is a research and education implementation of
+    # the upstream TradingAgents framework, and concrete trade levels for a named
+    # security are what turn a research tool into an investment-advisory product.
+    # Turning this on is the operator's decision, and the operator is responsible
+    # for how the output is used and for any licensing their jurisdiction requires.
+    "enable_execution_levels": False,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

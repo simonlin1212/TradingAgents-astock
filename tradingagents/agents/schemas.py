@@ -85,7 +85,7 @@ class ResearchPlan(BaseModel):
     strategic_actions: str = Field(
         description=(
             "Concrete steps for the trader to implement the recommendation, "
-            "including position sizing guidance consistent with the rating."
+            "consistent with the rating."
         ),
     )
 
@@ -110,9 +110,12 @@ class TraderProposal(BaseModel):
     """Structured transaction proposal produced by the Trader.
 
     The trader reads the Research Manager's investment plan and the analyst
-    reports, then turns them into a concrete transaction: what action to
-    take, the reasoning that justifies it, and the practical levels for
-    entry, stop-loss, and sizing.
+    reports, then states a direction and the reasoning behind it.
+
+    This default variant deliberately carries **no executable price levels**
+    (entry / stop-loss / sizing).  Those live in
+    :class:`TraderProposalWithLevels`, which is opt-in via the
+    ``enable_execution_levels`` config flag.  See that class for why.
     """
 
     action: TraderAction = Field(
@@ -121,9 +124,24 @@ class TraderProposal(BaseModel):
     reasoning: str = Field(
         description=(
             "The case for this action, anchored in the analysts' reports and "
-            "the research plan. Two to four sentences."
+            "the research plan. Two to four sentences. Do not quote specific "
+            "entry, stop-loss or position-size levels."
         ),
     )
+
+
+class TraderProposalWithLevels(TraderProposal):
+    """Opt-in variant that additionally asks for executable price levels.
+
+    Only used when ``enable_execution_levels`` is True in the config. It is
+    off by default: this project is a research/education implementation of
+    the upstream TradingAgents framework, and concrete entry / stop-loss /
+    position-size levels for a named security are exactly the kind of output
+    that turns a research tool into an investment-advisory product. Operators
+    who turn this on are responsible for how the output is used and for any
+    licensing their jurisdiction requires.
+    """
+
     entry_price: Optional[float] = Field(
         default=None,
         description="Optional entry price target in the instrument's quote currency.",
@@ -138,6 +156,11 @@ class TraderProposal(BaseModel):
     )
 
 
+def trader_proposal_model(enable_execution_levels: bool = False) -> type[TraderProposal]:
+    """Pick the Trader schema matching the ``enable_execution_levels`` flag."""
+    return TraderProposalWithLevels if enable_execution_levels else TraderProposal
+
+
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
 
@@ -150,12 +173,16 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         "",
         f"**Reasoning**: {proposal.reasoning}",
     ]
-    if proposal.entry_price is not None:
-        parts.extend(["", f"**Entry Price**: {proposal.entry_price}"])
-    if proposal.stop_loss is not None:
-        parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
-    if proposal.position_sizing:
-        parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
+    # getattr: the default TraderProposal has no level fields at all.
+    entry_price = getattr(proposal, "entry_price", None)
+    stop_loss = getattr(proposal, "stop_loss", None)
+    position_sizing = getattr(proposal, "position_sizing", None)
+    if entry_price is not None:
+        parts.extend(["", f"**Entry Price**: {entry_price}"])
+    if stop_loss is not None:
+        parts.extend(["", f"**Stop Loss**: {stop_loss}"])
+    if position_sizing:
+        parts.extend(["", f"**Position Sizing**: {position_sizing}"])
     parts.extend([
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
@@ -185,8 +212,9 @@ class PortfolioDecision(BaseModel):
     )
     executive_summary: str = Field(
         description=(
-            "A concise action plan covering entry strategy, position sizing, "
-            "key risk levels, and time horizon. Two to four sentences."
+            "A concise summary of what drove the rating and the main "
+            "considerations on each side. Two to four sentences. Do not quote "
+            "specific entry, stop-loss, position-size or target-price levels."
         ),
     )
     investment_thesis: str = Field(
@@ -196,14 +224,37 @@ class PortfolioDecision(BaseModel):
             "incorporate them; otherwise rely solely on the current analysis."
         ),
     )
+    time_horizon: Optional[str] = Field(
+        default=None,
+        description="Optional analysis horizon, e.g. '3-6 months'.",
+    )
+
+
+class PortfolioDecisionWithTarget(PortfolioDecision):
+    """Opt-in variant that additionally asks for a price target.
+
+    Mirrors :class:`TraderProposalWithLevels` — gated behind the same
+    ``enable_execution_levels`` config flag, off by default. See that class
+    for the rationale.
+    """
+
+    executive_summary: str = Field(
+        description=(
+            "A concise action plan covering entry strategy, position sizing, "
+            "key risk levels, and time horizon. Two to four sentences."
+        ),
+    )
     price_target: Optional[float] = Field(
         default=None,
         description="Optional target price in the instrument's quote currency.",
     )
-    time_horizon: Optional[str] = Field(
-        default=None,
-        description="Optional recommended holding period, e.g. '3-6 months'.",
-    )
+
+
+def portfolio_decision_model(
+    enable_execution_levels: bool = False,
+) -> type[PortfolioDecision]:
+    """Pick the Portfolio Manager schema matching the ``enable_execution_levels`` flag."""
+    return PortfolioDecisionWithTarget if enable_execution_levels else PortfolioDecision
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -221,8 +272,10 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
     ]
-    if decision.price_target is not None:
-        parts.extend(["", f"**Price Target**: {decision.price_target}"])
+    # getattr: the default PortfolioDecision has no price_target field at all.
+    price_target = getattr(decision, "price_target", None)
+    if price_target is not None:
+        parts.extend(["", f"**Price Target**: {price_target}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)
