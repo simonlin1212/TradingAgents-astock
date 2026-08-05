@@ -70,3 +70,120 @@ Web：侧栏「批量筛选」折叠区（M4 时一并做）。
 - clist 字段可用性依赖东财接口返回（需实测 fields 名，`f12`=code `f14`=name `f2`=现价 `f3`=涨跌幅 `f20`=总市值 `f9`=PE，开工时先打印原始 JSON 核对）
 - 资金流若需逐票取，单次扫描可能几十次东财请求 → 走 `_em_get` 且建议放 `EM_MIN_INTERVAL=1.5~2`
 - scanner 是"粗筛"：只有行情/基本面阈值，不含分析师判断——精筛交给 M4
+
+## 核心代码片段
+
+### 1. clist 泛化（新文件 `tradingagents/scanner/clist.py`，**东财调用必须走 `_em_get`**）
+```python
+from tradingagents.dataflows.a_stock import _em_get   # 统一限流入口（a_stock.py:288-303）
+
+# 东财 clist 字段：f12=code f14=name f2=现价 f3=涨跌幅 f20=总市值 f9=PE
+def get_market_snapshot(fs: str = "m:0+t:6,m:0+t:80,m:1+t:2",   # 全 A（沪深主板+创业+科创）
+                        sort: str = "3:desc",                    # 3=涨跌幅, 20=总市值
+                        fields: str = "f12,f14,f2,f3,f20,f9",
+                        pz: int = 100) -> list[dict]:
+    return _em_get("https://push2.eastmoney.com/api/qt/clist/get", params={
+        "pn": 1, "pz": pz, "po": 1, "np": 1, "fltt": 2, "invt": 2,
+        "fid": sort.split(":")[0], "fs": fs, "fields": fields,
+    })
+
+def top_gainers(limit=100) -> list[dict]: return get_market_snapshot(sort="3:desc", pz=limit)
+def top_mktcap(limit=100)   -> list[dict]: return get_market_snapshot(sort="20:desc", pz=limit)
+```
+> ⚠️ 开工时先打印原始 JSON 核对字段名（f9 PE 在亏损股可能为 `-`），再写解析。
+
+### 2. 筛选器（新文件 `tradingagents/scanner/scanner.py`）
+```python
+from pydantic import BaseModel
+
+class ScreenCriteria(BaseModel):
+    industries: list[str] = []          # 来自 get_industry_comparison 的板块名
+    pe_min: float | None = None;  pe_max: float | None = None
+    mktcap_min: float | None = None     # 亿元
+    chg_min: float | None = None        # 涨跌幅下限 %
+    exclude_st: bool = True
+    limit: int = 20
+
+def run_screen(c: ScreenCriteria) -> list[dict]:
+    rows = top_gainers(limit=500)                     # 候选池（可换 fs 限定行业）
+    rows = [r for r in rows if _is_st(r) is not c.exclude_st]
+    if c.pe_min is not None:  rows = [r for r in rows if _pe(r) >= c.pe_min]
+    if c.pe_max is not None:  rows = [r for r in rows if _pe(r) <= c.pe_max]
+    if c.mktcap_min: rows = [r for r in rows if _mktcap(r) >= c.mktcap_min]
+    if c.chg_min:    rows = [r for r in rows if _chg(r) >= c.chg_min]
+    return rows[:c.limit]                              # 每条含触发条件标注
+
+def _is_st(name: str) -> bool:
+    return "ST" in name.upper() or "退" in name
+```
+
+### 3. CLI 子命令（`cli/main.py` 或新 `cli/scan.py`，仿照现有 `@app.command()`）
+```python
+@app.command()
+def scan(industry: list[str] = typer.Option([]), pe_min: float = typer.Option(None),
+         mktcap_min: float = typer.Option(None), chg_min: float = typer.Option(None),
+         exclude_st: bool = typer.Option(True), limit: int = typer.Option(20),
+         output: Path = typer.Option(Path("pool.csv"))):
+    pool = run_screen(ScreenCriteria(industries=industry, pe_min=pe_min,
+                                     mktcap_min=mktcap_min, chg_min=chg_min,
+                                     exclude_st=exclude_st, limit=limit))
+    pd.DataFrame(pool).to_csv(output, index=False)     # 供 M4 消费
+```
+
+## 测试方法与步骤
+
+### 测试文件与策略
+| 文件 | 类型 | mock 策略 |
+|------|------|-----------|
+| `tests/test_scanner.py` | unit | `monkeypatch` 掉 `_em_get` 返回 fixture JSON（固定 3-5 行 clist 样本），零网络 |
+| `tests/test_scanner_cli.py` | unit | mock `run_screen`，验证 CLI 参数 → 条件对象 → CSV 输出 |
+
+### 关键用例
+1. 排行解析：fixture JSON → `top_gainers` 返回结构正确的 list[dict]（字段映射、`-` 值 → None）
+2. 条件 AND：pe 区间 + chg 下限同时生效；单个条件不满足即过滤
+3. ST 过滤：`*ST*` / `退*` 名称被排除，`exclude_st=False` 时保留
+4. limit 截断：候选 500 → 输出 ≤ limit
+5. **限流合规**：断言扫描全程 `_em_get` 被调用（且未绕过直接 `requests.get`）
+6. CLI：`--pe-min 10 --limit 5` 生成 CSV，表头与 M4 期望一致
+
+### 运行与验收步骤
+```bash
+python -m pytest tests/test_scanner.py tests/test_scanner_cli.py -v   # 全 mock，离线可跑
+python -m pytest tests/ -v -m "not integration"
+# 手动冒烟（真数据，慢）：EM_MIN_INTERVAL=1.5 tradingagents scan --limit 10 --exclude-st
+# 检查：输出 pool.csv；东财未被封（HTTP 200，无 449/重试）
+```
+
+## 手动测试场景（实际使用）
+
+> 前置条件：网络可用；建议先跑单元测试确认解析逻辑（mock 已覆盖），再上真数据。
+
+### 场景 A：首次真数据「字段核对」（必做一次）
+**目的**：验证东财 clist 返回字段与计划中假设一致（f12/f14/f2/f3/f20/f9）。
+1. 临时跑一次最小查询并打印原始响应：
+```python
+python - <<'EOF'
+from tradingagents.scanner.clist import get_market_snapshot
+import json
+print(json.dumps(get_market_snapshot(pz=3), ensure_ascii=False, indent=1))
+EOF
+```
+2. 人工核对：code/name/现价/涨跌幅/总市值/PE 各字段名与类型；亏损股 PE 是否为 `-`
+**预期**：字段映射正确；若不符，更新 `clist.py` 解析并回改测试 fixture。
+
+### 场景 B：条件筛选「真实筛选」
+**目的**：验证组合条件从真市场筛出标的池。
+1. 运行：`EM_MIN_INTERVAL=1.5 tradingagents scan --industry 半导体 --pe-max 50 --mktcap-min 100 --limit 20 -o pool.csv`
+2. 检查 `pool.csv`
+**预期**：≤20 行；每行含 code/name/现价/涨跌幅/市值/PE；无 ST/退市；可抽查 2-3 只股票行情与条件吻合；耗时合理（限流生效）。
+
+### 场景 C：限流与稳定性
+**目的**：验证批量请求不触发东财封 IP。
+1. 连跑 3 次场景 B（每次间隔 ~1s 后）
+2. 观察日志/响应
+**预期**：无 HTTP 449/封禁重试/空响应；设 `EM_MIN_INTERVAL=2` 更稳；连续跑不报 `Too Many Requests`。
+
+### 场景 D：CSV 可直接被 M4 消费
+**目的**：验证与批量分析的接口衔接。
+1. 场景 B 产出 `pool.csv`，用 `tradingagents batch --pool pool.csv --limit 2`（M4 实现后）试跑
+**预期**：M4 能正确读取并逐个分析（批量跑通 = M3 与 M4 衔接闭环）。

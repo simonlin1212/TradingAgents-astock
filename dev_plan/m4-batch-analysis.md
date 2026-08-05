@@ -69,3 +69,116 @@ for ticker in pool:            # v1 串行；后续可受限并发
 - **成本**：5 标的全量 ≈ 150-250 次 LLM 调用，务必先打印预估再执行
 - 东财限流是模块级串行——并发跑多标的会排长队，v1 串行足够；后续并发需注意 `_em_get` 全局锁
 - 长耗时：5 标的全量可能 10-30 分钟，CLI 需有逐标的进度输出；Web 用已有 `ProgressTracker` 模式
+
+## 核心代码片段
+
+### 1. 批量编排（新文件 `tradingagents/batch/runner.py`）
+```python
+from tradingagents.dataflows.utils import safe_ticker_component   # 安全边界，逐个过校验
+from tradingagents.graph.trading_graph import TradingAgentsGraph
+from dataclasses import dataclass, field
+
+ALL_ANALYSTS = ["market", "social", "news", "fundamentals", "policy", "hot_money", "lockup"]
+QUICK_ANALYSTS = ["market", "social", "fundamentals", "news"]     # 快速模式砍 3 个特化
+
+@dataclass
+class BatchResult:
+    code: str; signal: str = ""; execution_advice: str = ""
+    thesis: str = ""; status: str = "ok"; error: str = ""; state: dict = field(default_factory=dict)
+
+def run_batch(pool: list[str], trade_date: str, config: dict,
+              quick: bool = False, limit: int = 5) -> list[BatchResult]:
+    results, analysts = [], QUICK_ANALYSTS if quick else ALL_ANALYSTS
+    for raw in pool[:limit]:                          # v1 串行；并发需考虑 _em_get 全局锁
+        code = safe_ticker_component(raw)             # 中文名/非法输入在此兜底
+        try:
+            graph = TradingAgentsGraph(selected_analysts=analysts, config=config)
+            final_state, signal = graph.propagate(code, trade_date)   # trading_graph.py:446
+            results.append(BatchResult(code, signal=signal,
+                                       execution_advice=final_state.get("execution_advice", ""),
+                                       thesis=_one_line(final_state), state=final_state))
+        except Exception as e:                        # 独立失败隔离，不中断整批
+            results.append(BatchResult(code, status="failed", error=str(e)))
+    return results
+```
+
+### 2. 成本预估（写死估算公式，执行前打印）
+```python
+def estimate_calls(n: int, quick: bool, debate_rounds=1, risk_rounds=1) -> int:
+    analysts = 4 if quick else 7
+    per_stock = analysts + 2 * debate_rounds + 1 + risk_rounds * 3 + 1 + 1   # +质量门+PM+执行建议
+    return n * per_stock
+# 打印示例：5 标的全量 ≈ 5 × (7+2+1+3+1+1) = 75 次 LLM 调用（供用户确认）
+```
+
+### 3. 汇总渲染（`cli/main.py` 或 `tradingagents/batch/report.py`）
+```python
+def render_summary(results: list[BatchResult], out: Path):
+    ok = [r for r in results if r.status == "ok"]
+    ok.sort(key=lambda r: _RATING_RANK.get(r.signal, 9))          # Buy 优先
+    lines = ["| 标的 | 评级 | 建议仓位 | 参考价位 | 一页理由 | 完整报告 |", "|---|---|---|---|---|---|"]
+    for r in ok:
+        lines.append(f"| {r.code} | {r.signal} | ... | ... | {r.thesis} | [报告]({r.code}_*)/complete_report.md |")
+    lines.append("\n## 失败清单\n" + "\n".join(f"- {r.code}: {r.error}" for r in results if r.status != "ok"))
+    out.write_text("\n".join(lines))
+```
+
+## 测试方法与步骤
+
+### 测试文件与策略
+| 文件 | 类型 | mock 策略 |
+|------|------|-----------|
+| `tests/test_batch.py` | unit | `monkeypatch` `TradingAgentsGraph.propagate` 返回假 `(state, signal)`；2-3 个标的 |
+| `tests/test_batch_report.py` | unit | 固定 `BatchResult` 列表 → 汇总 markdown 断言（排序/失败清单/表头） |
+
+### 关键用例
+1. **失败隔离**：第 2 个标的 propagate 抛错 → 其余标的正常，结果含 `status="failed"` + 错误信息
+2. **limit 截断**：pool 10 个 → 只跑 5 个
+3. **quick 模式**：断言 `TradingAgentsGraph` 收到的 `selected_analysts == QUICK_ANALYSTS`
+4. **安全边界**：pool 含中文名/非法输入 → 经 `safe_ticker_component` 转码或拒绝（不抛裸异常）
+5. 汇总排序：Buy/Overweight/Hold/Sell 顺序正确；失败清单独立列出
+6. 成本预估：`estimate_calls(5, quick=False) == 75`（固定公式回归）
+7. 检查点：mock 续跑场景——重跑时已完成标的不重复执行（若实现续跑）
+
+### 运行与验收步骤
+```bash
+python -m pytest tests/test_batch.py tests/test_batch_report.py -v    # 全 mock，离线可跑
+python -m pytest tests/ -v -m "not integration"
+# 手动冒烟（需真 LLM + 数据）：--limit 2 跑通 → 检查 summary.md 表格与完整报告链接
+# 批量前置检查：先打印成本预估 → 用户确认 → 执行；EM_MIN_INTERVAL=1.5~2
+```
+
+## 手动测试场景（实际使用）
+
+> 前置条件：`.env` 配置好 LLM provider；真实网络；先有 M3 的 `pool.csv` 或手写小标的池。
+> ⚠️ 每次批量前先确认打印的成本预估（5 标的全量 ≈ 75 次 LLM 调用）。
+
+### 场景 A：小批量全流程（核心场景）
+**目的**：验证 2 标的批量分析端到端跑通。
+1. 构造 `pool_small.csv`（2 只真实可交易标的，如 `600519,贵州茅台` / `000001,平安银行`）
+2. 运行：`EM_MIN_INTERVAL=2 tradingagents batch --pool pool_small.csv --limit 2 --trade-date <当日>`
+3. 观察：逐标的进度输出 → 成本预估打印 → 汇总生成
+**预期**：2 个标的均 `status=ok`；`reports/batch_{ts}/summary.md` 表格含评级排序、建议仓位、参考价位、一页理由、完整报告链接；各链接可打开且含 VI 章节。
+
+### 场景 B：快速模式对比
+**目的**：验证 `--quick` 输出结构一致、耗时更短。
+1. 同一 pool 分别跑 `--quick` 与全量模式（间隔 1s 以上）
+2. 对比 summary.md 与单标的报告
+**预期**：快速模式仅缺 policy/hot_money/lockup 三个分析师章节；评级与执行建议结构完整；耗时明显更短（约 30% 省调用）。
+
+### 场景 C：失败隔离实测
+**目的**：验证单个标的失败不中断整批。
+1. 构造 `pool_bad.csv`：1 个正常标的 + 1 个非法代码（如 `999999`）+ 1 个已退市/停牌标的
+2. 运行批量
+**预期**：正常标的成功；非法标的在「失败清单」列出（原因明确，如解析失败）；整批不中断、不崩溃、无残留进程。
+
+### 场景 D：断点续跑（checkpoint）
+**目的**：验证中断后重跑跳过已完成标的。
+1. 用 3 个标的跑批量，中途 Ctrl-C 中断（第一个已完成、第二个进行中）
+2. 开启 `checkpoint_enabled` 重跑同一 pool
+**预期**：已完成标的直接复用/跳过，未完成标的继续，最终汇总完整。
+
+### 场景 E：成本与限流观察
+**目的**：验证批量下的东财限流与 LLM 成本可控。
+1. `--limit 5` 全量跑一次，记录耗时与调用数（与预估对比）
+**预期**：LLM 调用数 ≈ 预估公式（±10%）；全程无东财 449；耗时记录可作为后续并发的基线。
