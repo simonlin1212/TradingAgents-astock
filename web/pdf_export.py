@@ -620,6 +620,13 @@ def _collect_sections(
             text = normalize_stock_mentions(text, ticker, final_state)
         sections.append(("最终决策", text))
 
+    exec_advice = final_state.get("execution_advice", "")
+    if exec_advice:
+        text = _strip_think(str(exec_advice))
+        if ticker:
+            text = normalize_stock_mentions(text, ticker, final_state)
+        sections.append(("执行建议（研究参考）", text))
+
     return sections
 
 

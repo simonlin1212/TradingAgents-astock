@@ -167,3 +167,9 @@ def render_report(
     if dqs:
         with st.expander("✅ 数据质量", expanded=False):
             st.markdown(_display_report_text(dqs, ticker, final_state))
+
+    exec_advice = final_state.get("execution_advice", "")
+    if exec_advice:
+        st.markdown("### 📐 执行建议（研究参考）")
+        st.markdown(_display_report_text(exec_advice, ticker, final_state))
+        st.markdown("---")

@@ -766,6 +766,13 @@ def save_report_to_disk(final_state, ticker: str, save_path: Path):
             (portfolio_dir / "decision.md").write_text(risk["judge_decision"], encoding="utf-8")
             sections.append(f"## V. Portfolio Manager Decision\n\n### Portfolio Manager\n{risk['judge_decision']}")
 
+    # 6. Execution Advisor (research-reference levels)
+    if final_state.get("execution_advice"):
+        advisor_dir = save_path / "6_execution"
+        advisor_dir.mkdir(exist_ok=True)
+        (advisor_dir / "advice.md").write_text(final_state["execution_advice"], encoding="utf-8")
+        sections.append(f"## VI. Execution Advice\n\n### Execution Advisor\n{final_state['execution_advice']}")
+
     # Write consolidated report
     header = f"# Trading Analysis Report: {ticker}\n\nGenerated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n> ⚠️ 免责声明：本报告由 AI 自动生成，仅供学习研究与技术演示，不构成任何投资建议。投资有风险，决策请咨询持牌专业机构。\n\n"
     (save_path / "complete_report.md").write_text(header + "\n\n".join(sections), encoding="utf-8")

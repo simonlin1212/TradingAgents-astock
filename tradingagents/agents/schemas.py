@@ -209,3 +209,77 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Execution Advisor
+# ---------------------------------------------------------------------------
+
+
+class ExecutionAdvice(BaseModel):
+    """Research-reference execution levels produced by the Execution Advisor.
+
+    Runs *after* the Portfolio Manager, whose mandate deliberately excludes
+    executable levels. This node translates the final rating into concrete
+    research-reference figures — entry zone, stop-loss, target price — used
+    for study and education only, not as an investment-advisory signal.
+
+    ``position_size_pct`` is intentionally NOT filled by the LLM: it is
+    computed deterministically from the stop distance by
+    ``tradingagents.agents.utils.position_sizing.position_size_pct`` and
+    written into the instance during validation, so the model cannot
+    hallucinate a position size.
+    """
+
+    entry_zone: str = Field(
+        description=(
+            "Recommended entry range as a narrow band around the latest close, "
+            "e.g. '12.5 - 13.2'. Must include the latest close inside it."
+        ),
+    )
+    stop_loss: float = Field(
+        description=(
+            "Stop-loss level, strictly BELOW the latest close. Base it on the "
+            "recent support level or close minus ~1.5x ATR."
+        ),
+    )
+    target_price: float = Field(
+        description=(
+            "Target price, strictly ABOVE the latest close. Base it on the "
+            "recent resistance level or close plus ~2x ATR."
+        ),
+    )
+    rationale: str = Field(
+        description=(
+            "One short sentence explaining the entry/stop/target choice, "
+            "60 characters or fewer. Do not repeat the rating rationale."
+        ),
+    )
+    position_size_pct: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Recommended position size as a percentage of total portfolio "
+            "capital, 0-100. Filled deterministically by position sizing "
+            "logic; the model does not propose this value."
+        ),
+    )
+
+
+def render_execution_advice(advice: ExecutionAdvice) -> str:
+    """Render an ExecutionAdvice to markdown for reports and the Web UI.
+
+    Section headers are stable (``**Entry Zone**`` / ``**Stop Loss**`` /
+    ``**Target Price**`` / ``**Position Size**`` / ``**Rationale**``) so
+    report writers can consume the output without parsing the model object.
+    """
+    parts = [
+        f"**Entry Zone**: {advice.entry_zone}",
+        f"**Stop Loss**: {advice.stop_loss}",
+        f"**Target Price**: {advice.target_price}",
+        f"**Position Size**: {advice.position_size_pct}%",
+    ]
+    if advice.rationale:
+        parts.append(f"**Rationale**: {advice.rationale}")
+    return "\n".join(parts)
