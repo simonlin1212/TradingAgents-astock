@@ -1,5 +1,12 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from tradingagents.agents.utils.agent_utils import build_instrument_context, get_language_instruction, get_news
+from tradingagents.agents.utils.agent_utils import (
+    build_instrument_context,
+    get_fund_flow,
+    get_hot_stocks,
+    get_language_instruction,
+    get_news,
+    get_stock_data,
+)
 from tradingagents.dataflows.config import get_config
 
 
@@ -8,8 +15,14 @@ def create_social_media_analyst(llm):
         current_date = state["trade_date"]
         instrument_context = build_instrument_context(state["company_of_interest"])
 
+        # 情绪不能只靠读新闻推断（#61）：光看文本，模型很容易把"这条新闻听起来利好"
+        # 当成"市场情绪乐观"，而资金可能正在流出。加上资金流 / 热度榜 / 量价三样
+        # 可核对的硬数据，让情绪判断有据可依，也能暴露"消息面与资金面背离"。
         tools = [
             get_news,
+            get_fund_flow,
+            get_hot_stocks,
+            get_stock_data,
         ]
 
         system_message = (
@@ -20,14 +33,27 @@ def create_social_media_analyst(llm):
             "\n- **情绪指标**：关注以下情绪信号 - 连续涨停后的追涨情绪、业绩暴雷后的恐慌抛售、机构调研后的预期变化、热门概念炒作的跟风程度。"
             "\n- **反向指标**：当市场情绪一致性过高（极度乐观或极度悲观）时，往往是反转信号。散户一致看多可能是阶段顶部。"
             "\n- **时间维度**：区分短期情绪波动（1-3 天，由单一事件驱动）和中期情绪趋势（1-4 周，由基本面变化驱动）。"
-            "\n\n请使用 `get_news(ticker, start_date, end_date)` 工具获取公司相关新闻和市场讨论，ticker 必须使用目标股票的 6 位代码。从新闻内容中推断市场情绪方向、强度和可能的转折点。"
+            "\n\n🔧 工具与取数顺序（ticker 一律用 6 位代码）："
+            "\n1. `get_fund_flow(ticker, curr_date)` — 主力/超大单/大单资金净流入（当日分钟级 + 近 20 日）。**这是情绪最硬的证据：嘴上说什么，不如钱往哪走。**"
+            "\n2. `get_stock_data(ticker, start_date, end_date)` — 近期量价。用成交量的放大/萎缩、涨跌幅的连续性判断情绪强度。"
+            "\n3. `get_hot_stocks(curr_date)` — 当日强势股与题材归因榜。看目标股是否在榜、所属题材是否正被资金追逐。"
+            "\n4. `get_news(ticker, start_date, end_date)` — 新闻与市场讨论，用于解释情绪的**成因**。"
+            "\n\n⚠️ 分析纪律 —— 情绪判断必须落在数据上，不能只凭新闻语气推断："
+            "\n- **先看资金，再看新闻**。新闻只能解释情绪从哪来，不能单独作为情绪结论的依据。"
+            "\n- **背离必须写出来**：消息面正面但主力资金持续净流出（或相反），是本报告最有价值的信号，务必单列指出并给出你的解读。"
+            "\n- **区分「热度」与「情绪方向」**：上榜、放量只说明关注度高，方向要由资金流向和涨跌结构判断。恐慌抛售同样是高热度。"
+            "\n- 数据取不到时如实标注，**不要用新闻语气去补一个编造的数字**。"
             "\n\n撰写详细的市场情绪分析报告，包含情绪评分（极度悲观/悲观/中性/乐观/极度乐观）和趋势判断。报告末尾附 Markdown 表格汇总情绪信号和结论。"
             "\n\n📋 必采清单 — 以下数据点必须出现在报告中，无法获取时标注 [数据缺失: xxx]："
-            "\n1. 新闻检索条数和时间范围"
-            "\n2. 正面/负面/中性新闻比例"
-            "\n3. 排名前 3 的舆情主题"
-            "\n4. 情绪评分（极度悲观/悲观/中性/乐观/极度乐观）"
-            "\n5. 情绪趋势变化方向（升温/降温/平稳）"
+            "\n1. 主力资金当日净流入金额、近 20 日累计净流入方向"
+            "\n2. 近期成交量变化（放量/缩量，相对前期均量的倍数）"
+            "\n3. 是否出现在当日强势股榜、所属题材标签"
+            "\n4. 新闻检索条数和时间范围"
+            "\n5. 正面/负面/中性新闻比例"
+            "\n6. 排名前 3 的舆情主题"
+            "\n7. **资金面与消息面是否背离**（一致/背离，背离时说明方向）"
+            "\n8. 情绪评分（极度悲观/悲观/中性/乐观/极度乐观）"
+            "\n9. 情绪趋势变化方向（升温/降温/平稳）"
             + get_language_instruction()
         )
 

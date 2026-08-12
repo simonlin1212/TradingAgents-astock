@@ -191,7 +191,12 @@ OPENAI_API_KEY=sk-xxx
 ANTHROPIC_API_KEY=sk-ant-xxx
 
 # ── 方案 G：Kimi（Anthropic 兼容 API）────────────────
-ANTHROPIC_AUTH_TOKEN=your-kimi-token
+ANTHROPIC_API_KEY=your-kimi-token
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/
+# ⚠️ 两个都要设。只给 key 不给端点，请求会发到 Anthropic 官方并报
+#    「401 invalid x-api-key」。端点也可以写在 config 的 backend_url 里（见下）。
+# ⚠️ 别用 ANTHROPIC_AUTH_TOKEN——那是 Claude Code CLI 的写法，本项目走 langchain，
+#    只认 ANTHROPIC_API_KEY。
 
 # ── 方案 H：任意 OpenAI 兼容网关（9Router / AI Router / 自建代理）──
 OPENAI_COMPATIBLE_API_KEY=sk-xxx     # 也接受 OPENAI_API_KEY
@@ -238,9 +243,34 @@ print(decision)
 ### 4. CLI 方式
 
 ```bash
-tradingagents            # 交互式 CLI
-tradingagents --help     # 查看所有选项
+tradingagents                 # 交互式 CLI
+tradingagents analyze         # 同上（默认命令）
+tradingagents performance     # 决策绩效统计（见下）
+tradingagents --help          # 查看所有选项
 ```
+
+### 5. 决策绩效统计（v0.5.2 新增）
+
+想知道**这套流程过往的判断准不准**，跑：
+
+```bash
+tradingagents performance            # 人读的报告
+tradingagents performance --json     # 机器读的 JSON
+```
+
+数据来自记忆日志：每次分析会落一条决策，下次分析同一只股票时自动拉真实行情回填收益与 alpha（对沪深 300）。**统计本身零 LLM 调用**，只读已经落盘的结果。
+
+输出的核心指标是 **`direction_accuracy`（方向正确率）**——**只有它衡量判断准不准**：看多要跑赢、看空要跑输才算对，Hold 不表态不计入。另外给出 `up_rate`（标的上涨占比）与 `outperform_rate`（跑赢沪深300占比），这两个只描述标的怎么走，**与判断对错无关**：给出卖出评级后股价下跌是判断正确，但它不会计入「上涨占比」。
+
+还有按评级、按标的分组，以及一项**评级区分度检验**——五档评级从 Buy 到 Sell，平均 alpha 是否真的单调递减。评级不单调，说明这套流程的评级没有实际区分能力。
+
+几点务必注意：
+
+- **这不是回测，也不是策略业绩。** 每条记录是「某天做出的判断在固定持有期后的表现」：持有窗口互相重叠、没有仓位管理、未计交易成本与冲击成本，样本还可能有选择偏差。
+- **A 股 beta 很强**，跟着大盘涨不代表判断对，所以方向正确率用 alpha 口径判定，看绝对收益容易高估判断力。
+- **样本量分开算**：方向正确率只统计有方向的评级，已结算总数够、但有方向的不足 20 条时，报告会单独提示这个指标仍是噪音。
+- **样本少于 20 条时报告会自己标注「这些比率基本是噪音」**，不要拿三五条记录下结论。
+- 收益解析不出来的记录会被**跳过**而不是当成 0%——后者会把统计悄悄拉向中性。
 
 ---
 
@@ -287,6 +317,8 @@ streamlit run web/app.py
 | `deep_think_llm` | `"MiniMax-M2.7"` | Research Manager + Portfolio Manager 用的模型 |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | 所有 Analyst / Researcher / Trader 用的模型 |
 | `backend_url` | `None` | 自定义 API 端点 / 第三方中转网关。可在 Web UI 侧边栏填写，或用 `.env` 的 `BACKEND_URL`；方便国内通过代理访问 Claude / OpenAI |
+| `role_llms` | `{}` | **可选**：给单个角色指定另一家模型（如多空辩手用不同厂商），留空 = 全部沿用 quick/deep 两档，行为不变。见下方「分角色模型」 #39 |
+| `max_tokens` | `None` | 单次回复的最大输出 token 数。`None` = 用 provider 默认值。**报告写到一半就断，先调这里**（不是上下文超长）；也可用环境变量 `TRADINGAGENTS_MAX_TOKENS`。#91 |
 | `output_language` | `"Chinese"` | 报告输出语言（内部辩论始终英文） |
 | `market_lookback_days` | `None` | 技术分析回溯天数（分析区间 = 起始日期 → 分析日期）。Web/CLI 由「数据起始日期」自动算出；`None` = 模型自选（约 30 天）。#16 |
 | `max_debate_rounds` | `1` | Bull vs Bear 辩论轮数 |
@@ -300,6 +332,45 @@ streamlit run web/app.py
 
 ---
 
+### 分角色模型（可选，v0.5.0 新增）
+
+默认所有角色共用 `quick_think_llm` / `deep_think_llm` 两档——**大多数人只有一家模型，不需要碰这一项**。
+
+如果你手上有多家模型，可以给单个角色单独指定。最典型的用法是**让多空辩手用不同厂商的模型**：同一个模型分饰多角时倾向于互相附和，换成不同底座才会真的出现反驳。
+
+```python
+config = {
+    "llm_provider": "deepseek",          # 未单独配置的角色仍走这里
+    "deep_think_llm": "deepseek-chat",
+    "quick_think_llm": "deepseek-chat",
+    "role_llms": {
+        "bull": {"provider": "qwen",    "model": "qwen-plus"},
+        "bear": {"provider": "glm",     "model": "glm-4.6"},
+        # provider 省略则沿用 llm_provider，只换模型：
+        "portfolio_manager": {"model": "deepseek-reasoner"},
+    },
+}
+```
+
+合法角色名（其余角色自动沿用两档默认）：
+
+| 分组 | 角色名 |
+|------|--------|
+| 7 个分析师 | `market` `social` `news` `fundamentals` `policy` `hot_money` `lockup` |
+| 辩论与决策 | `bull` `bear` `research_manager` `trader` |
+| 风险三方 | `risk_aggressive` `risk_neutral` `risk_conservative` |
+| 其他 | `quality_gate` `portfolio_manager` |
+
+几点说明：
+
+- **角色名写错会直接报错**，不会静默忽略——否则你会以为配置生效了，实际没有。
+- **相同的 provider + model 只建一个实例**，写 7 个角色不会开 7 条连接。
+- 每家 provider 用**自己的** API Key 环境变量（`DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY` …），缺哪个会指名报出来。
+- 换了 provider 时**不会**把 `backend_url` 带过去（那是给主 provider 配的端点），需要的话在该角色里单独写 `backend_url`。
+- 同时开着 `claude_agent_sdk` 订阅覆盖时，`role_llms` 里配的角色会**绕开订阅按 token 计费**，启动时会点名警告是哪几个。
+
+---
+
 ## 常见问题排错
 
 **Q: 用 DeepSeek/通义/智谱，却报 `OpenAIError: The api_key client option must be set ... OPENAI_API_KEY`？**
@@ -307,6 +378,38 @@ streamlit run web/app.py
 
 **Q: 想接一个 OpenAI 兼容的第三方网关/中继（9Router、AI Router、自建代理），自定义 base_url + model？**
 用 **「OpenAI 兼容（自定义 base_url）」** 这一档（v0.2.20 新增）。Web 侧栏「LLM 供应商」选它 →「快速/深度思考模型 ID」手动填你网关支持的 model 名 →「API Base URL」填你的网关地址（如 `https://your-relay.example/v1`）→ `.env` 里设 `OPENAI_COMPATIBLE_API_KEY=你的key`（也接受 `OPENAI_API_KEY`）。CLI 方式选 `OpenAI-Compatible` 后会提示输入 Base URL。它走标准 Chat Completions（非 OpenAI Responses API，兼容性最好），model 名自由填、不受内置清单限制。配置方式等价：`llm_provider="openai_compatible"` + `backend_url="<你的网关>"` + `deep_think_llm/quick_think_llm="<你的model>"`。
+
+**Q: 明明装了 Python 3.12/3.14，`pip install -e .` 却报 `requires a different Python: 3.9.6 not in '>=3.10'`？**
+报错里的 **3.9.6 就是当前这个 `pip` 绑定的解释器版本**——你装的新版本没被它用上（macOS 自带的 `pip3` 常指向系统 3.9）。先确认是哪个解释器在跑：
+
+```bash
+pip3 -V                    # 末尾括号里就是它绑定的 Python
+python3.12 -m pip -V       # 换成你想用的版本再看
+```
+
+用 `python -m pip` 的写法就不会认错人，推荐配合虚拟环境：
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+python -m pip install -e .
+```
+
+Windows 用 `py -3.12 -m venv .venv` + `.venv\Scripts\activate`。（#92）
+
+**Q: 报告写到一半就结束了，上下文明明没超长？**
+撞的是**输出**上限，不是上下文上限——模型一次回复能吐多少 token 是另一个限制。v0.4.1 起，这种截断会在日志里明确告诉你（`因为达到输出上限被截断`），不再是默默给你半篇报告。调大即可：config 里设 `max_tokens`（例如 `"max_tokens": 16000`），或设环境变量 `TRADINGAGENTS_MAX_TOKENS=16000`。
+
+另外，用 **Kimi 等第三方模型名走 `anthropic` 通道**时，langchain 认不出模型名，会默认一个很小的输出上限（旧版本表现为报告普遍偏短）。v0.4.1 起这种情况会自动放宽到 8192，仍不够就显式配 `max_tokens`。#91
+
+**Q: 接 Kimi 报 `401 invalid x-api-key`？**
+说明请求发到了 **Anthropic 官方**而不是 Kimi——光给 key 没给端点。两个都要给：
+
+```bash
+ANTHROPIC_API_KEY=你的kimi-token
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/   # 或在 config 里写 backend_url
+```
+
+注意 **`ANTHROPIC_AUTH_TOKEN` 在本项目里不生效**（那是 Claude Code CLI 的写法），本项目走 langchain，只读 `ANTHROPIC_API_KEY`。v0.4.1 起，用非 Claude 模型名却没配端点会**在启动时**直接告诉你缺什么，而不是等 Anthropic 回一句看不懂的 401。#89
 
 **Q: 导出 PDF 报 `UnicodeEncodeError: 'latin-1' codec can't encode`？**
 你的环境里装了**旧版 `fpdf`（pyfpdf）**，它和本项目用的 `fpdf2` 都以 `fpdf` 名称导入、互相冲突。执行：`pip uninstall -y fpdf && pip install "fpdf2>=2.8.6"`。实在不行可改用「下载 Markdown」导出（零依赖，永远可用）。

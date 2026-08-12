@@ -22,7 +22,7 @@ except ImportError as exc:  # pragma: no cover - depends on optional install
         "works without this."
     ) from exc
 
-from .base_client import BaseLLMClient, normalize_content
+from .base_client import BaseLLMClient, normalize_content, warn_if_truncated
 from .validators import validate_model
 
 
@@ -34,7 +34,9 @@ class NormalizedChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
     """
 
     def invoke(self, input, config=None, **kwargs):
-        return normalize_content(super().invoke(input, config, **kwargs))
+        response = super().invoke(input, config, **kwargs)
+        warn_if_truncated(response, self.model)
+        return normalize_content(response)
 
 
 class GoogleClient(BaseLLMClient):
@@ -51,7 +53,7 @@ class GoogleClient(BaseLLMClient):
         if self.base_url:
             llm_kwargs["base_url"] = self.base_url
 
-        for key in ("timeout", "max_retries", "callbacks", "http_client", "http_async_client"):
+        for key in ("timeout", "max_retries", "max_tokens", "callbacks", "http_client", "http_async_client"):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
 

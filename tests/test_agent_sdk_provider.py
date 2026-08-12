@@ -31,6 +31,16 @@ class _Plan(BaseModel):
     confidence: int
 
 
+# 需要真装可选依赖的用例：它们会走到 SDK 自己的 API（ClaudeAgentOptions /
+# create_sdk_mcp_server），光 mock `_query` 不够。没装就**跳过**，不要红着——
+# 长期红的代价是没人再看，而本文件里恰恰有两条是保护「订阅凭据失效不得静默降级
+# 到按 token 计费」的护栏（那两条已不再依赖 SDK，见 ClaudeSDKError 占位类型）。
+requires_sdk = pytest.mark.skipif(
+    mod._sdk is None,
+    reason="需要可选依赖 claude-agent-sdk：pip install -e '.[agentsdk]'",
+)
+
+
 @pytest.fixture
 def oauth_env(monkeypatch):
     """Enable the provider cleanly: OAuth token present, API key absent."""
@@ -85,12 +95,14 @@ class _FakeLangChainTool:
 # T-002 / F-002: adapter surface
 # --------------------------------------------------------------------------- #
 
+@requires_sdk
 def test_invoke_returns_aimessage(monkeypatch, oauth_env):
     client = _client_with_query(monkeypatch, text="hello from max")
     result = _adapter(client).invoke("say hi")
     assert result.content == "hello from max"
 
 
+@requires_sdk
 def test_structured_output_returns_pydantic(monkeypatch, oauth_env):
     client = _client_with_query(
         monkeypatch, structured={"decision": "buy", "confidence": 4}
@@ -100,6 +112,7 @@ def test_structured_output_returns_pydantic(monkeypatch, oauth_env):
     assert plan.decision == "buy" and plan.confidence == 4
 
 
+@requires_sdk
 def test_structured_output_parses_json_text_when_no_structured_field(monkeypatch, oauth_env):
     # SDK returned text (not structured_output) — adapter must parse the JSON.
     text = 'noise before {"decision": "hold", "confidence": 2} noise after'
@@ -108,6 +121,7 @@ def test_structured_output_parses_json_text_when_no_structured_field(monkeypatch
     assert plan.decision == "hold" and plan.confidence == 2
 
 
+@requires_sdk
 def test_bind_tools_returns_runnable_and_final_report(monkeypatch, oauth_env):
     # bind_tools must return a Runnable (so `prompt | bound` composes) whose
     # invoke runs the SDK tool loop and returns a final report with NO
@@ -122,6 +136,7 @@ def test_bind_tools_returns_runnable_and_final_report(monkeypatch, oauth_env):
     assert result.tool_calls == []
 
 
+@requires_sdk
 def test_bind_tools_falls_back_on_rate_limit(monkeypatch, oauth_env):
     # Subscription tool loop hits quota → fall back to the fallback provider's
     # bind_tools, which rejoins LangGraph's normal external ToolNode loop.
@@ -215,6 +230,7 @@ def _install_stub_fallback(monkeypatch):
     )
 
 
+@requires_sdk
 def test_invoke_falls_back_on_rate_limit(monkeypatch, oauth_env):
     client = ClaudeAgentSDKClient(
         "claude-opus-4-8",
@@ -232,6 +248,7 @@ def test_invoke_falls_back_on_rate_limit(monkeypatch, oauth_env):
     assert result.content == "served by fallback"
 
 
+@requires_sdk
 def test_structured_falls_back_and_still_yields_pydantic(monkeypatch, oauth_env):
     client = ClaudeAgentSDKClient(
         "claude-opus-4-8",
@@ -250,6 +267,7 @@ def test_structured_falls_back_and_still_yields_pydantic(monkeypatch, oauth_env)
     assert plan.decision == "fallback-buy"
 
 
+@requires_sdk
 def test_no_fallback_spec_reraises(monkeypatch, oauth_env):
     client = ClaudeAgentSDKClient("claude-opus-4-8", fallback_spec=None)
 
@@ -544,6 +562,7 @@ def test_auth_detection_ignores_ordinary_assistant_text():
     assert _looks_like_auth_failure(_SyntheticAuth()) is True
 
 
+@requires_sdk
 def test_sdk_subprocess_env_blanks_anthropic_api_key(monkeypatch):
     """ANTHROPIC_API_KEY 必须在子进程被置空（否则悄悄走 API 计费），
     但父进程要保留它，好让 anthropic 仍能作为降级 provider。"""

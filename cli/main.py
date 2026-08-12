@@ -1310,6 +1310,32 @@ def run_analysis(checkpoint: bool = False):
         display_complete_report(final_state)
 
 
+@app.callback(invoke_without_command=True)
+def _default(
+    ctx: typer.Context,
+    checkpoint: bool = typer.Option(
+        False,
+        "--checkpoint",
+        help="Enable checkpoint/resume: save state after each node so a crashed run can resume.",
+    ),
+    clear_checkpoints: bool = typer.Option(
+        False,
+        "--clear-checkpoints",
+        help="Delete all saved checkpoints before running (force fresh start).",
+    ),
+):
+    """裸跑 `tradingagents`（不带子命令）＝ 直接开始分析。
+
+    ⚠️ 这个 callback 是**必须**的：Typer 在只有一个命令时用"单命令模式"，
+    裸跑就等于跑那个命令；一旦注册第二个子命令（v0.5.2 加的 `performance`），
+    它会切换成"命令组模式"，裸跑 `tradingagents` 直接报 `Missing command` 退出——
+    而 README 和所有文档写的都是裸跑。加子命令时务必保住这条默认路径。
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    analyze(checkpoint=checkpoint, clear_checkpoints=clear_checkpoints)
+
+
 @app.command()
 def analyze(
     checkpoint: bool = typer.Option(
@@ -1328,6 +1354,29 @@ def analyze(
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
     run_analysis(checkpoint=checkpoint)
+
+
+@app.command()
+def performance(
+    json_out: bool = typer.Option(
+        False, "--json", help="Print raw JSON instead of the formatted report."
+    ),
+):
+    """决策绩效统计：这套流程过往的判断准不准（零 LLM 调用，只读已结算的记录）。
+
+    数据来自记忆日志：每次分析会落一条决策，下次分析同一只股票时自动拉真实行情
+    回填收益与 alpha。**这不是回测**，详见报告末尾的说明。
+    """
+    import json as _json
+
+    from tradingagents.agents.utils.memory import TradingMemoryLog
+    from tradingagents.performance import format_report, summarize
+
+    summary = summarize(TradingMemoryLog(DEFAULT_CONFIG).load_entries())
+    if json_out:
+        console.print_json(_json.dumps(summary, ensure_ascii=False))
+        return
+    console.print(Markdown(format_report(summary)))
 
 
 if __name__ == "__main__":
