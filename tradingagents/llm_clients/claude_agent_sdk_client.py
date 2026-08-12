@@ -63,7 +63,21 @@ except Exception as exc:  # ImportError or any transitive import failure
     ClaudeAgentOptions = None
     create_sdk_mcp_server = None
     _sdk_tool = None
-    ClaudeSDKError = Exception  # placeholder so `except` clauses never NameError
+
+    class _MissingSDKError(Exception):
+        """SDK 未安装时 ClaudeSDKError 的占位类型。
+
+        ⚠️ 这里**不能**用 `Exception` 本身占位。`ClaudeSDKError` 会进
+        `_FALLBACK_ERRORS`，而那个元组决定"哪些错误可以降级到按 token 计费的
+        provider"。一旦它退化成 `Exception`，`isinstance(任何异常, ...)` 恒为真，
+        `_AuthError`（订阅凭据失效，刻意排除在外）也会被判成可降级——这条护栏
+        存在的全部意义就是不让凭据过期变成悄悄开始计费。
+
+        用独立类型占位后，`except ClaudeSDKError` 一样不会 NameError，而元组永远
+        不会变成 catch-all。保护这条护栏的测试也就不再依赖可选依赖是否安装。
+        """
+
+    ClaudeSDKError = _MissingSDKError
     _IMPORT_ERROR = exc
 
 

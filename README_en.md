@@ -177,7 +177,13 @@ OPENAI_API_KEY=sk-xxx
 ANTHROPIC_API_KEY=sk-ant-xxx
 
 # ── Option G: Kimi (Anthropic-compatible API) ───────────────────────────────
-ANTHROPIC_AUTH_TOKEN=your-kimi-token
+ANTHROPIC_API_KEY=your-kimi-token
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/
+# ⚠️ Both are required. With the key but no endpoint, requests go to Anthropic
+#    itself and fail with "401 invalid x-api-key". The endpoint can also be set
+#    as `backend_url` in the config (see below).
+# ⚠️ Do not use ANTHROPIC_AUTH_TOKEN — that is the Claude Code CLI convention.
+#    This project runs on langchain, which only reads ANTHROPIC_API_KEY.
 
 # ── Option H: Any OpenAI-compatible gateway (9Router / AI Router / self-hosted proxy) ──
 OPENAI_COMPATIBLE_API_KEY=sk-xxx     # Also accepts OPENAI_API_KEY
@@ -224,9 +230,34 @@ print(decision)
 ### 4. CLI Mode
 
 ```bash
-tradingagents            # Interactive CLI
-tradingagents --help     # Show all options
+tradingagents                 # Interactive CLI
+tradingagents analyze         # Same as above (default command)
+tradingagents performance     # Decision performance report (see below)
+tradingagents --help          # Show all options
 ```
+
+### 5. Decision performance report (added in v0.5.2)
+
+To find out **how well the pipeline's past calls actually held up**:
+
+```bash
+tradingagents performance            # Human-readable report
+tradingagents performance --json     # Machine-readable JSON
+```
+
+The data comes from the memory log: every analysis records a decision, and the next analysis of the same ticker resolves it by fetching real prices and filling in the return and the alpha (against CSI 300). **The report itself makes zero LLM calls** — it only reads results already on disk.
+
+The headline metric is **`direction_accuracy`** — **the only one that measures whether the calls were right**: a bullish rating must outperform and a bearish one must underperform; Hold takes no position and is excluded. It also reports `up_rate` (how often the instrument rose) and `outperform_rate` (how often it beat CSI 300); **those two describe the instrument, not the decision** — a Sell followed by a decline is a *correct* call, yet it does not count toward `up_rate`.
+
+Plus breakdowns by rating and by ticker, and a **rating-discrimination check**: across the five tiers from Buy to Sell, does average alpha actually decrease monotonically? A non-monotonic result means the ratings carry no real discriminating power.
+
+Important caveats:
+
+- **This is not a backtest, and not strategy performance.** Each record is "how one judgement made on one day looked after a fixed holding window": the windows overlap, there is no position sizing, no transaction or impact costs, and the sample may be selection-biased.
+- **A-share beta is strong** — rising with the index is not the same as being right, so direction accuracy is judged on alpha; raw return would overstate skill.
+- **Significance is counted per metric**: direction accuracy only uses directional ratings, so when the resolved total is large enough but the directional count is under 20, the report flags that metric separately.
+- **Below 20 resolved records the report says so itself** ("these ratios are mostly noise"). Do not draw conclusions from a handful of entries.
+- Records whose return cannot be parsed are **skipped, not counted as 0%** — counting them would quietly drag every statistic toward neutral.
 
 ---
 ## Web UI
@@ -271,6 +302,8 @@ All configuration is passed in through the `config` dictionary. Complete options
 | `deep_think_llm` | `"MiniMax-M2.7"` | Model used by the Research Manager + Portfolio Manager |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | Model used by all Analysts / Researchers / Traders |
 | `backend_url` | `None` | Custom API endpoint / third-party relay gateway. Can be filled in via the Web UI sidebar or the `.env` file's `BACKEND_URL`; useful for accessing Claude / OpenAI from within China via a proxy |
+| `role_llms` | `{}` | **Optional**: give individual roles a different model (e.g. bull vs bear from different vendors). Empty = every role uses the quick/deep pair as before. See "Per-role models" below. #39 |
+| `max_tokens` | `None` | Max output tokens per reply. `None` = the provider's own default. **If a report stops mid-sentence, raise this first** (it is the output cap, not the context window); also settable via `TRADINGAGENTS_MAX_TOKENS`. #91 |
 | `output_language` | `"Chinese"` | Language for report output (internal debates are always in English) |
 | `market_lookback_days` | `None` | Lookback period in days for technical analysis (analysis range = start date → analysis date). Automatically calculated from the "data start date" in Web/CLI; `None` = model chooses (~30 days). #16 |
 | `max_debate_rounds` | `1` | Number of Bull vs Bear debate rounds |
@@ -278,6 +311,46 @@ All configuration is passed in through the `config` dictionary. Complete options
 | `data_vendors` | All `"a_stock"` | Data vendor routing |
 | `checkpoint_enabled` | `False` | Enable SQLite checkpoint/resume |
 | `memory_log_max_entries` | `None` | Maximum number of entries in trading memory |
+
+### Per-role models (optional, added in v0.5.0)
+
+By default every role shares the `quick_think_llm` / `deep_think_llm` pair — **most people run a single vendor and never need this**.
+
+If you do have several models available, you can assign one to a specific role. The motivating case is **giving the bull and bear researchers models from different vendors**: one model playing both sides tends to agree with itself, and real rebuttals only show up once the underlying models differ.
+
+```python
+config = {
+    "llm_provider": "deepseek",          # roles you do not list still use this
+    "deep_think_llm": "deepseek-chat",
+    "quick_think_llm": "deepseek-chat",
+    "role_llms": {
+        "bull": {"provider": "qwen", "model": "qwen-plus"},
+        "bear": {"provider": "glm",  "model": "glm-4.6"},
+        # omit provider to keep llm_provider and only swap the model:
+        "portfolio_manager": {"model": "deepseek-reasoner"},
+    },
+}
+```
+
+Valid role names (anything you omit keeps the quick/deep default):
+
+| Group | Roles |
+|-------|-------|
+| 7 analysts | `market` `social` `news` `fundamentals` `policy` `hot_money` `lockup` |
+| Debate & decision | `bull` `bear` `research_manager` `trader` |
+| Risk trio | `risk_aggressive` `risk_neutral` `risk_conservative` |
+| Other | `quality_gate` `portfolio_manager` |
+
+Notes:
+
+- **A misspelled role name raises immediately** rather than being ignored — otherwise you would believe the config took effect when it did not.
+- **Identical provider + model share one instance**, so listing seven roles does not open seven connections.
+- Each provider uses **its own** API key variable (`DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` / `ZHIPU_API_KEY` …); a missing one is reported by name.
+- `backend_url` is **not** carried across vendors (it belongs to the main provider); set `backend_url` inside the role entry if you need one.
+- With the `claude_agent_sdk` subscription override on, roles listed in `role_llms` **bypass the subscription and bill per token**; the affected roles are named in a startup warning.
+
+---
+
 ## Common Troubleshooting
 
 **Q: Using DeepSeek/Tongyi/Zhipu but getting `OpenAIError: The api_key client option must be set ... OPENAI_API_KEY`?**
@@ -285,6 +358,38 @@ Each provider uses **its own environment variable**, not `OPENAI_API_KEY`: DeepS
 
 **Q: Want to connect to an OpenAI-compatible third-party gateway/relay (9Router, AI Router, self-built proxy) with a custom base_url + model?**
 Use the **「OpenAI-Compatible (Custom base_url)」** option (added in v0.2.20). In the Web sidebar, select it under "LLM Provider" → Manually enter the model name supported by your gateway under "Fast/Deep Think Model ID" → Enter your gateway address under "API Base URL" (e.g., `https://your-relay.example/v1`) → Set `OPENAI_COMPATIBLE_API_KEY=your_key` in `.env` (it also accepts `OPENAI_API_KEY`). For CLI, after selecting `OpenAI-Compatible`, it will prompt for the Base URL. It uses standard Chat Completions (not OpenAI Responses API, for best compatibility), and the model name can be freely entered without being restricted by the built-in list. The equivalent configuration is: `llm_provider="openai_compatible"` + `backend_url="<your_gateway>"` + `deep_think_llm/quick_think_llm="<your_model>"`.
+
+**Q: I have Python 3.12/3.14 installed, but `pip install -e .` says `requires a different Python: 3.9.6 not in '>=3.10'`?**
+The **3.9.6 in that message is the interpreter your current `pip` is bound to** — the newer version you installed is not the one being used (on macOS, the bundled `pip3` often points at the system 3.9). Check which interpreter is running:
+
+```bash
+pip3 -V                    # the path in parentheses is its Python
+python3.12 -m pip -V       # same check for the version you want
+```
+
+Using `python -m pip` avoids the mix-up; a virtualenv is recommended:
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+python -m pip install -e .
+```
+
+On Windows use `py -3.12 -m venv .venv` + `.venv\Scripts\activate`. (#92)
+
+**Q: The report stops halfway through, but the context window was nowhere near full?**
+You are hitting the **output** cap, not the context cap — how many tokens a model may emit in one reply is a separate limit. Since v0.4.1 this truncation is reported in the logs (`因为达到输出上限被截断` / truncated at the output limit) instead of silently handing you half a report. Raise it with `max_tokens` in the config (e.g. `"max_tokens": 16000`) or the `TRADINGAGENTS_MAX_TOKENS` environment variable.
+
+Also note: when you run a **third-party model name (Kimi and friends) through the `anthropic` provider**, langchain does not recognise the model and applies a very small default output cap, which shows up as uniformly short reports. Since v0.4.1 those models default to 8192; set `max_tokens` explicitly if you need more. #91
+
+**Q: Kimi fails with `401 invalid x-api-key`?**
+The request reached **Anthropic itself**, not Kimi — you supplied the key but not the endpoint. Both are required:
+
+```bash
+ANTHROPIC_API_KEY=your-kimi-token
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/   # or set backend_url in the config
+```
+
+Note that **`ANTHROPIC_AUTH_TOKEN` has no effect here** — that is the Claude Code CLI convention. This project runs on langchain, which only reads `ANTHROPIC_API_KEY`. Since v0.4.1, using a non-Claude model name without an endpoint fails **at startup** with an explanation instead of an opaque 401 from Anthropic. #89
 
 **Q: Exporting PDF gives `UnicodeEncodeError: 'latin-1' codec can't encode`?**
 Your environment has **an old version of `fpdf` (pyfpdf)** installed, which conflicts with the `fpdf2` used by this project, as both are imported under the name `fpdf`. Execute: `pip uninstall -y fpdf && pip install "fpdf2>=2.8.6"`. If this doesn't work, you can use the "Download Markdown" export option instead (zero dependencies, always available).
