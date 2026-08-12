@@ -37,7 +37,7 @@ def create_fundamentals_analyst(llm):
             "\n- **特殊风险关注**：商誉减值（并购后遗症）、股权质押比例、大股东减持计划、关联交易规模。"
             "\n\n请使用以下工具获取数据："
             "\n- `get_fundamentals`：获取公司综合基本面信息（PE/PB/总市值/季报财务快照/一致预期EPS/前向PE/PEG等）"
-            "\n- `get_profit_forecast`：获取机构一致预期EPS详情（覆盖机构数、EPS区间、前向PE、PEG、PE消化时间）"
+            "\n- `get_profit_forecast(ticker, curr_date)`：获取机构一致预期EPS详情（覆盖机构数、EPS区间、前向PE、PEG、PE消化时间）。**curr_date 必须传当前分析日期**——一致预期没有历史版本，数据层靠它判断是否在复盘历史并给出提示"
             "\n- `get_balance_sheet`：资产负债表详细数据"
             "\n- `get_cashflow`：现金流量表详细数据"
             "\n- `get_income_statement`：利润表详细数据"

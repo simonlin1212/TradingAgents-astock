@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import tempfile
 import threading
@@ -12,6 +13,8 @@ from typing import Any
 
 from tradingagents.default_config import DEFAULT_CONFIG
 
+
+logger = logging.getLogger(__name__)
 
 _INCOMPLETE_TASKS_FILE = Path.home() / ".tradingagents" / "incomplete_tasks.json"
 _INCOMPLETE_TASKS_LOCK = threading.Lock()
@@ -82,19 +85,52 @@ def _load_incomplete_index() -> list[dict[str, Any]]:
 
 
 def _save_incomplete_index(entries: list[dict[str, Any]]) -> None:
+    """原子写 incomplete_tasks.json，兼容 Windows 文件占用。
+
+    目标文件可能被其他进程短暂占用（如多实例 Web UI、杀毒软件扫描），
+    此时 ``tmp.replace`` 在 Windows 上会抛 ``PermissionError``（#77）。
+    先重试几次等待锁释放，仍失败则降级为直接覆写——读取端
+    （``_load_incomplete_index``）已容错损坏 JSON，索引写不进去不致命。
+    """
     parent = _INCOMPLETE_TASKS_FILE.parent
     parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=parent,
-        prefix=f"{_INCOMPLETE_TASKS_FILE.stem}.",
-        suffix=".tmp",
-        delete=False,
-    ) as f:
-        json.dump(entries, f, ensure_ascii=False, indent=2)
-        tmp = Path(f.name)
-    tmp.replace(_INCOMPLETE_TASKS_FILE)
+    payload = json.dumps(entries, ensure_ascii=False, indent=2)
+
+    for attempt in range(3):
+        tmp: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=parent,
+                prefix=f"{_INCOMPLETE_TASKS_FILE.stem}.",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                f.write(payload)
+                tmp = Path(f.name)
+            tmp.replace(_INCOMPLETE_TASKS_FILE)
+            return
+        except PermissionError:
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
+            if attempt < 2:
+                # 锁通常是瞬时的，短暂等待后重试
+                time.sleep(0.15 * (attempt + 1))
+        except OSError:
+            raise
+
+    # 重试耗尽仍被占用：直接覆写（非原子但可接受）。
+    try:
+        _INCOMPLETE_TASKS_FILE.write_text(payload, encoding="utf-8")
+    except OSError as e:
+        # 索引写不进去不致命——读取端容错、下次写入会自动重建，所以不往上抛。
+        # 但**不能一声不吭**：完全静默的话，用户永远不会知道它一直在失败，
+        # 「未完成任务」列表长期不更新时也无从排查。
+        logger.warning(
+            "写入未完成任务索引失败（已重试并降级为直接覆写）：%s。"
+            "不影响本次分析，但侧边栏的未完成任务列表可能不是最新的。", e
+        )
 
 
 def _checkpoint_step(ticker: str, trade_date: str) -> int | None:
