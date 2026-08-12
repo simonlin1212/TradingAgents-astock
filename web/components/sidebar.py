@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from datetime import date
+from pathlib import Path
 
 import streamlit as st
 
@@ -16,6 +19,58 @@ from web.history import (
     get_incomplete_history,
     record_incomplete_task,
 )
+
+logger = logging.getLogger(__name__)
+
+# ── LLM config persistence ────────────────────────────────────────────────────
+# Saves model selection to a JSON file so it survives browser tab close/reopen.
+_LLM_CONFIG_PATH = Path(DEFAULT_CONFIG["project_dir"]) / ".llm_config.json"
+
+
+def _load_saved_llm_config() -> None:
+    """Restore user's last model selection into session_state defaults."""
+    try:
+        cfg = json.loads(_LLM_CONFIG_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+    provider_key = cfg.get("llm_provider", "")
+    try:
+        idx = _PROVIDER_KEYS.index(provider_key)
+    except ValueError:
+        idx = 0
+    st.session_state.setdefault("llm_provider_idx", idx)
+    st.session_state.setdefault("quick_model_idx", cfg.get("quick_model_idx", 0))
+    st.session_state.setdefault("deep_model_idx", cfg.get("deep_model_idx", 0))
+    st.session_state.setdefault("llm_base_url", cfg.get("llm_base_url", ""))
+    st.session_state.setdefault("subscription_scope", cfg.get("subscription_scope", "off"))
+    if cfg.get("agent_sdk_model"):
+        st.session_state.setdefault("agent_sdk_model", cfg["agent_sdk_model"])
+    for key in ("custom_quick_model", "custom_deep_model"):
+        if key in cfg and cfg[key]:
+            st.session_state.setdefault(key, cfg[key])
+
+
+def _save_llm_config() -> None:
+    """Persist current LLM config to disk (called before analysis)."""
+    cfg = {
+        "llm_provider": st.session_state.get("llm_provider", "minimax"),
+        "quick_model_idx": st.session_state.get("quick_model_idx", 0),
+        "deep_model_idx": st.session_state.get("deep_model_idx", 0),
+        "llm_base_url": st.session_state.get("llm_base_url", ""),
+        "subscription_scope": st.session_state.get("subscription_scope", "off"),
+    }
+    if st.session_state.get("agent_sdk_model"):
+        cfg["agent_sdk_model"] = st.session_state["agent_sdk_model"]
+    for key in ("custom_quick_model", "custom_deep_model"):
+        val = st.session_state.get(key)
+        if val:
+            cfg[key] = val
+    # 持久化失败（目录只读 / 磁盘满）只记 warning，不得打断「开始分析」主流程
+    try:
+        _LLM_CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    except OSError as exc:
+        logger.warning("LLM 配置持久化失败（不影响本次分析）: %s", exc)
+
 
 # Provider display names in recommended order
 _PROVIDERS: list[tuple[str, str]] = [
@@ -246,6 +301,8 @@ def _render_llm_config() -> None:
 
 def render_sidebar() -> None:
     """Render the sidebar with input controls and history."""
+    # Restore saved LLM config on every render so selectboxes start at the user's last selection.
+    _load_saved_llm_config()
 
     st.markdown(
         """
@@ -303,6 +360,7 @@ def render_sidebar() -> None:
         disabled=is_busy or not ticker,
         type="primary",
     ):
+        _save_llm_config()  # persist model choice before running
         resolved_code, err = _resolve_user_input(ticker)
         if err:
             st.error(f"❌ {err}")
