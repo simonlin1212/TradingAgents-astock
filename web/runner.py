@@ -7,7 +7,7 @@ import threading
 import traceback
 from typing import Any
 
-from web.history import clear_incomplete_task, record_incomplete_task
+from web.history import _LockAcquireError, clear_incomplete_task, record_incomplete_task
 from web.progress import PIPELINE_STAGES, ProgressTracker
 from web.stock_display import normalize_report_state_mentions, normalize_stock_mentions
 
@@ -29,7 +29,10 @@ def _discard_stopped_run(
     """Clear resumable artifacts for a user-stopped run."""
     from tradingagents.graph.checkpointer import clear_checkpoint
 
-    clear_incomplete_task(ticker, trade_date)
+    try:
+        clear_incomplete_task(ticker, trade_date)
+    except _LockAcquireError as e:
+        print(f"[WARN runner] clear_incomplete_task 跳过: {e}", flush=True)
     clear_checkpoint(config["data_cache_dir"], ticker, trade_date)
     tracker.mark_stopped()
 
@@ -93,7 +96,6 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
     stats = StatsCallbackHandler()
-
     graph = TradingAgentsGraph(
         debug=True,
         config=config,
@@ -161,7 +163,10 @@ def _run(ticker: str, trade_date: str, config: dict, tracker: ProgressTracker) -
             return
 
         tracker.mark_complete(last_chunk, signal)
-        clear_incomplete_task(ticker, trade_date)
+        try:
+            clear_incomplete_task(ticker, trade_date)
+        except _LockAcquireError as e:
+            print(f"[WARN runner] clear_incomplete_task 跳过: {e}", flush=True)
     finally:
         graph.close_graph_run()
 
@@ -177,12 +182,16 @@ def run_analysis_in_thread(
     tracker.trade_date = trade_date
     tracker.is_running = True
     tracker.mark_stage_active("market")
-    record_incomplete_task(
-        ticker,
-        trade_date,
-        status="running",
-        completed_stages=tracker.completed_stages,
-    )
+    try:
+        record_incomplete_task(
+            ticker,
+            trade_date,
+            status="running",
+            completed_stages=tracker.completed_stages,
+        )
+    except _LockAcquireError as e:
+        # 锁被占用不阻塞启动分析，记录到 tracker.error 后继续
+        print(f"[WARN runner] record_incomplete_task 跳过: {e}", flush=True)
 
     def _target() -> None:
         try:
@@ -195,13 +204,16 @@ def run_analysis_in_thread(
                     traceback.print_exc()
                 return
             traceback.print_exc()
-            record_incomplete_task(
-                ticker,
-                trade_date,
-                status="error",
-                error=str(exc),
-                completed_stages=tracker.completed_stages,
-            )
+            try:
+                record_incomplete_task(
+                    ticker,
+                    trade_date,
+                    status="error",
+                    error=str(exc),
+                    completed_stages=tracker.completed_stages,
+                )
+            except _LockAcquireError:
+                pass
             tracker.mark_error(str(exc))
 
     t = threading.Thread(target=_target, daemon=True)

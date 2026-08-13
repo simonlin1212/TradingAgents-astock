@@ -14,7 +14,23 @@ from tradingagents.default_config import DEFAULT_CONFIG
 
 
 _INCOMPLETE_TASKS_FILE = Path.home() / ".tradingagents" / "incomplete_tasks.json"
+# 带超时的锁：Streamlit runOnSave 中断脚本线程时不会释放 threading.Lock，
+# 用超时 + try/finally 避免 dev 模式编辑文件导致的永久死锁。
 _INCOMPLETE_TASKS_LOCK = threading.Lock()
+_INCOMPLETE_TASKS_LOCK_TIMEOUT = 5.0  # 秒
+
+
+class _LockAcquireError(RuntimeError):
+    """获取 incomplete-tasks 锁超时时抛出，调用方可降级处理。"""
+
+
+def _acquire_incomplete_lock():
+    """获取锁，超时抛出 _LockAcquireError。必须配 try/finally 释放。"""
+    if not _INCOMPLETE_TASKS_LOCK.acquire(timeout=_INCOMPLETE_TASKS_LOCK_TIMEOUT):
+        raise _LockAcquireError(
+            f"无法获取 incomplete_tasks 锁（超过 {_INCOMPLETE_TASKS_LOCK_TIMEOUT}s）。"
+            "可能是上次脚本被 Streamlit 中断时未释放锁，请重启 Streamlit 服务。"
+        )
 
 
 def _results_dir() -> Path:
@@ -120,7 +136,8 @@ def record_incomplete_task(
     if not ticker or not trade_date:
         return
 
-    with _INCOMPLETE_TASKS_LOCK:
+    _acquire_incomplete_lock()
+    try:
         entries = [
             entry
             for entry in _load_incomplete_index()
@@ -140,13 +157,20 @@ def record_incomplete_task(
         )
         entries.sort(key=lambda e: float(e.get("updated_at", 0)), reverse=True)
         _save_incomplete_index(entries)
+    finally:
+        _INCOMPLETE_TASKS_LOCK.release()
 
 
 def clear_incomplete_task(ticker: str, trade_date: str) -> None:
-    """Remove an incomplete task once it completes successfully."""
+    """Remove an incomplete task once it completes successfully.
+
+    锁获取超时会抛出 _LockAcquireError，调用方应捕获并降级处理
+    （例如显示提示让用户重启 Streamlit 服务），不要让整个应用卡死。
+    """
     ticker = ticker.strip().upper()
     trade_date = trade_date.strip()
-    with _INCOMPLETE_TASKS_LOCK:
+    _acquire_incomplete_lock()
+    try:
         entries = [
             entry
             for entry in _load_incomplete_index()
@@ -154,14 +178,25 @@ def clear_incomplete_task(ticker: str, trade_date: str) -> None:
             != _completed_key(ticker, trade_date)
         ]
         _save_incomplete_index(entries)
+    finally:
+        _INCOMPLETE_TASKS_LOCK.release()
 
 
 def get_incomplete_history() -> list[dict[str, Any]]:
-    """Return unfinished tasks that can be resumed from their checkpoint."""
+    """Return unfinished tasks that can be resumed from their checkpoint.
+
+    锁获取超时时返回空列表（降级），避免阻塞 sidebar 渲染导致整个应用无响应。
+    """
     completed = _completed_keys()
     active_entries: list[dict[str, Any]] = []
 
-    with _INCOMPLETE_TASKS_LOCK:
+    try:
+        _acquire_incomplete_lock()
+    except _LockAcquireError:
+        # 锁被占用（通常是 dev 模式编辑文件触发的死锁），降级返回空列表
+        return active_entries
+
+    try:
         entries = _load_incomplete_index()
         for entry in entries:
             key = _completed_key(entry["ticker"], entry["trade_date"])
@@ -175,6 +210,8 @@ def get_incomplete_history() -> list[dict[str, Any]]:
         active_entries.sort(key=lambda e: float(e.get("updated_at", 0)), reverse=True)
         if len(active_entries) != len(entries):
             _save_incomplete_index(active_entries)
+    finally:
+        _INCOMPLETE_TASKS_LOCK.release()
     return active_entries
 
 

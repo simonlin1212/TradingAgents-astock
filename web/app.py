@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 from pathlib import Path
@@ -23,7 +22,12 @@ from tradingagents.default_config import DEFAULT_CONFIG  # noqa: E402
 from web.components.progress_panel import render_progress  # noqa: E402
 from web.components.report_viewer import render_report  # noqa: E402
 from web.components.sidebar import render_sidebar  # noqa: E402
-from web.history import clear_incomplete_task, extract_signal, load_analysis  # noqa: E402
+from web.history import (  # noqa: E402
+    _LockAcquireError,
+    clear_incomplete_task,
+    extract_signal,
+    load_analysis,
+)
 from web.progress import ProgressTracker  # noqa: E402
 from web.runner import run_analysis_in_thread  # noqa: E402
 
@@ -158,11 +162,22 @@ st.markdown(
 
 def _build_config() -> dict:
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = st.session_state.get("llm_provider", "minimax")
-    config["deep_think_llm"] = st.session_state.get("deep_think_llm", "MiniMax-M2.7")
-    config["quick_think_llm"] = st.session_state.get("quick_think_llm", "MiniMax-M2.7-highspeed")
-    # Optional third-party / proxy endpoint. Sidebar input wins, else .env BACKEND_URL.
-    backend_url = (st.session_state.get("llm_base_url") or os.getenv("BACKEND_URL") or "").strip()
+    # 侧栏选择优先；侧栏还没渲染时退回 DEFAULT_CONFIG（其中已含 .env 的
+    # TRADINGAGENTS_* 覆盖值），不要在这里再写一遍硬编码的模型名。
+    config["llm_provider"] = st.session_state.get(
+        "llm_provider", DEFAULT_CONFIG["llm_provider"]
+    )
+    config["deep_think_llm"] = st.session_state.get(
+        "deep_think_llm", DEFAULT_CONFIG["deep_think_llm"]
+    )
+    config["quick_think_llm"] = st.session_state.get(
+        "quick_think_llm", DEFAULT_CONFIG["quick_think_llm"]
+    )
+    # Optional third-party / proxy endpoint. Sidebar input wins, else .env
+    # (DEFAULT_CONFIG 已解析过 TRADINGAGENTS_BACKEND_URL / BACKEND_URL)。
+    backend_url = (
+        st.session_state.get("llm_base_url") or DEFAULT_CONFIG["backend_url"] or ""
+    ).strip()
     config["backend_url"] = backend_url or None
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
@@ -173,10 +188,9 @@ def _build_config() -> dict:
     }
     # Analysis window (#16): start-date input in the sidebar → look-back days.
     config["market_lookback_days"] = st.session_state.get("market_lookback_days")
-    config["max_debate_rounds"] = 1
-    config["max_risk_discuss_rounds"] = 1
+    # 辩论轮数和输出语言直接沿用 DEFAULT_CONFIG（config 是它的 copy，已含
+    # .env 覆盖值），不再硬编码覆盖。
     config["checkpoint_enabled"] = True
-    config["output_language"] = "Chinese"
     return config
 
 
@@ -190,28 +204,38 @@ with st.sidebar:
 
 start_req = st.session_state.pop("start_analysis", None)
 if start_req:
-    if start_req.get("fresh"):
-        from tradingagents.graph.checkpointer import clear_checkpoint
+    try:
+        if start_req.get("fresh"):
+            from tradingagents.graph.checkpointer import clear_checkpoint
 
-        clear_incomplete_task(start_req["ticker"], start_req["trade_date"])
-        clear_checkpoint(
-            DEFAULT_CONFIG["data_cache_dir"],
-            start_req["ticker"],
-            start_req["trade_date"],
+            try:
+                clear_incomplete_task(start_req["ticker"], start_req["trade_date"])
+            except _LockAcquireError as e:
+                # 锁被占用（dev 模式编辑文件触发的死锁等），不阻塞启动分析
+                print(f"[WARN app.py] clear_incomplete_task 跳过: {e}", flush=True)
+            clear_checkpoint(
+                DEFAULT_CONFIG["data_cache_dir"],
+                start_req["ticker"],
+                start_req["trade_date"],
+            )
+
+        tracker = ProgressTracker(
+            ticker=start_req["ticker"],
+            trade_date=start_req["trade_date"],
         )
-
-    tracker = ProgressTracker(
-        ticker=start_req["ticker"],
-        trade_date=start_req["trade_date"],
-    )
-    st.session_state["tracker"] = tracker
-    st.session_state["viewing_history"] = None
-    run_analysis_in_thread(
-        ticker=start_req["ticker"],
-        trade_date=start_req["trade_date"],
-        config=_build_config(),
-        tracker=tracker,
-    )
+        st.session_state["tracker"] = tracker
+        st.session_state["viewing_history"] = None
+        run_analysis_in_thread(
+            ticker=start_req["ticker"],
+            trade_date=start_req["trade_date"],
+            config=_build_config(),
+            tracker=tracker,
+        )
+    except Exception as e:
+        import traceback
+        print(f"[ERROR app.py] start_analysis failed: {e}", flush=True)
+        traceback.print_exc()
+        st.error(f"启动分析失败: {e}")
 
 
 # ── Main area state machine ─────────────────────────────────────────────────
