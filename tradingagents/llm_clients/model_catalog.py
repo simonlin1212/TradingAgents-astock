@@ -7,6 +7,21 @@ from typing import Dict, List, Tuple
 ModelOption = Tuple[str, str]
 ProviderModeOptions = Dict[str, Dict[str, List[ModelOption]]]
 
+# 火山方舟订阅套餐的 Anthropic 兼容端点：provider -> (base_url, 专用 Key 变量)。
+# 放在这个纯数据模块里，好让 Web 侧栏读默认端点时不必 import anthropic_client
+# （那会拖进 langchain_anthropic，破坏 factory 的懒加载）。
+# 出处：https://docs.volcengine.com/docs/82379/2373746
+ARK_PLAN_ENDPOINTS: Dict[str, Tuple[str, str]] = {
+    "ark_coding": (
+        "https://ark.cn-beijing.volces.com/api/coding",
+        "ARK_CODING_API_KEY",
+    ),
+    "ark_agent": (
+        "https://ark.cn-beijing.volces.com/api/plan",
+        "ARK_AGENT_API_KEY",
+    ),
+}
+
 
 MODEL_OPTIONS: ProviderModeOptions = {
     "openai": {
@@ -112,6 +127,38 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("MiniMax-M2.5 - Stable flagship model", "MiniMax-M2.5"),
             ("MiniMax-M2.7-highspeed - Fast alternative", "MiniMax-M2.7-highspeed"),
             ("Custom model ID", "custom"),
+        ],
+    },
+    # 火山方舟订阅套餐（Coding Plan / Agent Plan），走 Anthropic 兼容接口。
+    # 模型 ID 用方舟自己的名字（不是 claude-*）；ark-code-latest 是 Auto 路由，
+    # 由方舟按任务自动挑模型。方舟会上下线模型（见其"模型上线/下线公告"），
+    # 所以这份清单只是常用项，validators 里放行任意 ID。
+    "ark_coding": {
+        "quick": [
+            ("Auto 路由（ark-code-latest）- 方舟自动选模型", "ark-code-latest"),
+            ("DeepSeek V4 Flash", "deepseek-v4-flash"),
+            ("MiniMax-M2.7", "minimax-m2.7"),
+            ("Kimi K2.6", "kimi-k2.6"),
+        ],
+        "deep": [
+            ("Auto 路由（ark-code-latest）- 方舟自动选模型", "ark-code-latest"),
+            ("Kimi K3 - 1M 上下文", "kimi-k3"),
+            ("DeepSeek V4 Pro", "deepseek-v4-pro"),
+            ("GLM-5.2 - 1M 上下文", "glm-5.2"),
+        ],
+    },
+    "ark_agent": {
+        "quick": [
+            ("Auto 路由（ark-code-latest）- 方舟自动选模型", "ark-code-latest"),
+            ("DeepSeek V4 Flash", "deepseek-v4-flash"),
+            ("MiniMax-M2.7", "minimax-m2.7"),
+            ("Kimi K2.6", "kimi-k2.6"),
+        ],
+        "deep": [
+            ("Auto 路由（ark-code-latest）- 方舟自动选模型", "ark-code-latest"),
+            ("Kimi K3 - 1M 上下文", "kimi-k3"),
+            ("DeepSeek V4 Pro", "deepseek-v4-pro"),
+            ("GLM-5.2 - 1M 上下文", "glm-5.2"),
         ],
     },
     # OpenRouter: fetched dynamically. Azure: any deployed model name.

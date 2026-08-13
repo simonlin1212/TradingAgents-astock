@@ -12,6 +12,10 @@ _OPENAI_COMPATIBLE = (
     "openai_compatible",
 )
 
+# 火山方舟的订阅套餐，走 Anthropic 兼容端点但用方舟自己的 Key 和模型名，
+# 单独一个 client（见 volcengine_client），端点表在 model_catalog.ARK_PLAN_ENDPOINTS。
+_VOLCENGINE_ARK = ("ark_coding", "ark_agent")
+
 
 def create_llm_client(
     provider: str,
@@ -42,6 +46,10 @@ def create_llm_client(
     if provider_lower in _OPENAI_COMPATIBLE:
         from .openai_client import OpenAIClient
         return OpenAIClient(model, base_url, provider=provider_lower, **kwargs)
+
+    if provider_lower in _VOLCENGINE_ARK:
+        from .volcengine_client import VolcengineArkClient
+        return VolcengineArkClient(model, base_url, provider=provider_lower, **kwargs)
 
     if provider_lower == "anthropic":
         from .anthropic_client import AnthropicClient
