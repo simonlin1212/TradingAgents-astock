@@ -8,7 +8,11 @@ model + a generic API key, with no hard-coded vendor defaults.
 import pytest
 
 from tradingagents.llm_clients.factory import _OPENAI_COMPATIBLE, create_llm_client
-from tradingagents.llm_clients.openai_client import NormalizedChatOpenAI, OpenAIClient
+from tradingagents.llm_clients.openai_client import (
+    DeepSeekChatOpenAI,
+    NormalizedChatOpenAI,
+    OpenAIClient,
+)
 
 
 @pytest.mark.unit
@@ -86,3 +90,59 @@ class TestOpenAICompatibleClient:
         )
         llm = client.get_llm()
         assert llm.client._client.api_key == "env-key"
+
+
+@pytest.mark.unit
+class TestOpenCodeGoStreaming:
+    def test_opencode_go_deepseek_enables_streaming_and_subclass(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        client = OpenAIClient(
+            "deepseek-v4-pro", base_url="https://opencode.ai/zen/go/v1",
+            provider="openai_compatible",
+        )
+        llm = client.get_llm()
+        assert llm.streaming is True
+        assert isinstance(llm, DeepSeekChatOpenAI)
+
+    def test_non_opencode_base_url_keeps_streaming_off(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        client = OpenAIClient(
+            "deepseek-v4-pro", base_url="https://relay.example/v1",
+            provider="openai_compatible",
+        )
+        llm = client.get_llm()
+        assert llm.streaming is False
+        assert not isinstance(llm, DeepSeekChatOpenAI)
+
+    def test_opencode_go_non_deepseek_model_streams_but_no_subclass(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "k")
+        client = OpenAIClient(
+            "mimo-v2.5", base_url="https://opencode.ai/zen/go/v1",
+            provider="openai_compatible",
+        )
+        llm = client.get_llm()
+        assert llm.streaming is True
+        assert not isinstance(llm, DeepSeekChatOpenAI)
+
+
+@pytest.mark.unit
+class TestDeepSeekStreamingReasoningCapture:
+    def test_capture_reasoning_content_on_streaming_chunk(self):
+        from langchain_core.messages import AIMessageChunk
+
+        llm = DeepSeekChatOpenAI(model="deepseek-v4-pro", api_key="k")
+        chunk = {
+            "choices": [{"delta": {"reasoning_content": "让我想想", "content": "答案是2"}}]
+        }
+        gen_chunk = llm._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, {})
+        assert gen_chunk is not None
+        assert gen_chunk.message.additional_kwargs.get("reasoning_content") == "让我想想"
+
+    def test_chunk_without_reasoning_is_left_untouched(self):
+        from langchain_core.messages import AIMessageChunk
+
+        llm = DeepSeekChatOpenAI(model="deepseek-v4-pro", api_key="k")
+        chunk = {"choices": [{"delta": {"content": "普通回答"}}]}
+        gen_chunk = llm._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, {})
+        assert gen_chunk is not None
+        assert "reasoning_content" not in gen_chunk.message.additional_kwargs

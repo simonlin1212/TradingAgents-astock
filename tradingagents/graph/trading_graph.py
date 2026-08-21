@@ -402,6 +402,18 @@ class TradingAgentsGraph:
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
+        # 项目级 LLM 请求超时/重试（#300705 静默卡死兜底）：单次请求挂起时
+        # 由 timeout 兜底，避免风险辩论节点永久卡住（进程 alive 但无输出）。
+        timeout = self.config.get("llm_timeout")
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        # SDK 层关闭重试（恒 0）：5xx 直接抛到应用层 openai_client.invoke，由它按
+        # llm_retry_delay 固定冷静期退避重试，而非 SDK 的 0.5s 指数退避。
+        kwargs["max_retries"] = 0
+        # 应用层重试参数（供 openai_client 读取；不进 _PASSTHROUGH_KWARGS，不透传给 SDK）。
+        kwargs["app_retries"] = self.config.get("llm_max_retries", 3)
+        kwargs["app_retry_delay"] = self.config.get("llm_retry_delay", 5)
+
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:
