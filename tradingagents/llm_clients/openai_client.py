@@ -232,6 +232,16 @@ class OpenAIClient(BaseLLMClient):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
 
+        # Model-specific output budget via capabilities.py — not a global cap.
+        # DeepSeek V4 reasoning 链不设上限会撞 opencode-go 约 3 分钟 idle timeout
+        #（#1204），但全局 8192 会误伤 Claude/Gemini 等（见 PR #100 review）。
+        # 仅当用户未显式设 max_tokens 时，按 capabilities 的 default_max_tokens
+        # 兜底，且 matcher 严格限于 V4 家族（capabilities.py: ^deepseek-v4）。
+        if "max_tokens" not in llm_kwargs:
+            cap = get_capabilities(self.model)
+            if cap.default_max_tokens is not None:
+                llm_kwargs["max_tokens"] = cap.default_max_tokens
+
         # Native OpenAI: use Responses API for consistent behavior across
         # all model families. Third-party providers use Chat Completions.
         if self.provider == "openai":
