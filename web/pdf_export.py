@@ -329,6 +329,24 @@ def _signal_color(signal: str) -> tuple[int, int, int]:
     return (251, 191, 36)
 
 
+def _missing_data_warning(final_state: dict[str, Any]) -> str | None:
+    """Return a concise warning when a report used incomplete inputs."""
+    tasks = final_state.get("missing_data_tasks")
+    active_count = (
+        sum(
+            1 for task in tasks
+            if isinstance(task, dict) and task.get("status", "active") == "active"
+        )
+        if isinstance(tasks, list)
+        else 0
+    )
+    if active_count:
+        return f"⚠️ 数据不完整：仍有 {active_count} 个取数缺口，本报告按当前已有内容生成。"
+    if final_state.get("missing_data_requires_reanalysis"):
+        return "⚠️ 数据已补齐但尚未重新分析：本报告仍基于补数前的分析结果。"
+    return None
+
+
 _REPORT_SECTIONS = [
     ("market_report", "技术分析报告"),
     ("sentiment_report", "市场情绪报告"),
@@ -353,6 +371,7 @@ class _ReportPDF(FPDF):
         self.ticker_label = stock_display_label(ticker, final_state)
         self.trade_date = trade_date
         self.signal = signal
+        self.final_state = final_state or {}
         regular_font, bold_font = _find_cjk_fonts()
 
         try:
@@ -413,6 +432,13 @@ class _ReportPDF(FPDF):
         self.set_text_color(255, 90, 31)
         self.cell(0, 12, "A股多Agent投研分析报告", align="C")
         self.ln(20)
+
+        warning = _missing_data_warning(self.final_state)
+        if warning:
+            self._use_font("B", 11)
+            self.set_text_color(190, 70, 20)
+            self._write_multicell(6, warning, align="C")
+            self.ln(8)
 
         self._use_font("B", 36)
         self.set_text_color(30, 30, 30)
@@ -664,6 +690,9 @@ def generate_markdown(final_state: dict[str, Any], ticker: str, trade_date: str,
         "---",
         "",
     ]
+    warning = _missing_data_warning(final_state)
+    if warning:
+        out.extend([f"> {warning}", ""])
     for title, content in _collect_sections(final_state, ticker):
         out.append(f"## {title}")
         out.append("")
