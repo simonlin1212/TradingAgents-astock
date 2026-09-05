@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 
 StructuredMethod = Literal[
@@ -32,7 +32,18 @@ class ModelCapabilities:
     preferred_structured_method: StructuredMethod
     requires_reasoning_content_roundtrip: bool = False
     supports_reasoning_split: bool = False
+    default_max_tokens: Optional[int] = None
 
+
+# DeepSeek V4 thinking 系的默认输出预算（reasoning + content 共用）。
+#
+# 来源：维护者在 PR #100 指出 8192 是“各家 Anthropic 兼容端点普遍支持的档位”
+# （anthropic_client.py _THIRD_PARTY_DEFAULT_MAX_TOKENS = 8192，缘起 #91
+# “报告写到一半结束”）。同一档位在 opencode-go 约 3 分钟 idle timeout 场景
+# 下（#1204）可约束 V4 reasoning 链的无限输出——不设上限时后端的长 reasoning
+# 链会导致网关空闲超时、进程挂起。PR #100 按维护者建议把**全局** 8192 撤回
+# 为 None（provider 原生上限），8192 仅应作用于**经明确识别的 V4 模型**。
+_DEEPSEEK_V4_DEFAULT_MAX_TOKENS = 8192
 
 _DEEPSEEK_THINKING = ModelCapabilities(
     supports_tool_choice=False,
@@ -40,6 +51,7 @@ _DEEPSEEK_THINKING = ModelCapabilities(
     supports_json_schema=False,
     preferred_structured_method="function_calling",
     requires_reasoning_content_roundtrip=True,
+    default_max_tokens=_DEEPSEEK_V4_DEFAULT_MAX_TOKENS,
 )
 
 _DEEPSEEK_CHAT = ModelCapabilities(
@@ -80,7 +92,7 @@ _BY_ID: dict[str, ModelCapabilities] = {
 }
 
 _BY_PATTERN: list[tuple[re.Pattern[str], ModelCapabilities]] = [
-    # 只匹配已实测的 V4 家族。`^deepseek-v\d` 会连 deepseek-v3* 和未来所有版本一起
+    # 只匹配已实测的 V4 家族。`^deepseek-v\\d` 会连 deepseek-v3* 和未来所有版本一起
     # 吃掉，把「不接受 tool_choice」这个**只在 V4/reasoner 上验证过**的结论强加给
     # 未验证的型号——结构化输出会从强制 schema 工具调用降级为可选调用，反而更容易
     # 退回自由文本。与下方 MiniMax 同一把尺子：新家族实测过再加。
