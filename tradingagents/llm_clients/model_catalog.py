@@ -118,7 +118,7 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Custom model ID", "custom"),
         ],
     },
-    # OpenRouter: fetched dynamically. Azure: any deployed model name.
+    # OpenRouter / Requesty: fetched dynamically. Azure: any deployed model name.
     "ollama": {
         "quick": [
             ("Qwen3:latest (8B, local)", "qwen3:latest"),

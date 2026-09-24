@@ -94,6 +94,7 @@ _PROVIDERS: list[tuple[str, str]] = [
     ("Google Gemini", "google"),
     ("xAI Grok", "xai"),
     ("OpenRouter（聚合·填 vendor/model 形式 ID）", "openrouter"),
+    ("Requesty（聚合·填 vendor/model 形式 ID）", "requesty"),
     ("OpenAI 兼容（自定义 base_url·9Router/AI Router/自建代理）", "openai_compatible"),
     ("Ollama（本地）", "ollama"),
 ]
@@ -253,7 +254,8 @@ def _render_llm_config() -> None:
             "API Key 仍从 .env 读取，每个供应商用各自的环境变量——"
             "OpenAI=OPENAI_API_KEY、DeepSeek=DEEPSEEK_API_KEY、"
             "通义=DASHSCOPE_API_KEY、智谱=ZHIPU_API_KEY、MiniMax=MINIMAX_API_KEY、"
-            "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、xAI=XAI_API_KEY、"
+            "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、Requesty=REQUESTY_API_KEY、"
+            "xAI=XAI_API_KEY、"
             "OpenAI 兼容（自定义）=OPENAI_COMPATIBLE_API_KEY（也接受 OPENAI_API_KEY）。"
             "也可在 .env 里设 BACKEND_URL 代替此处。"
         ),

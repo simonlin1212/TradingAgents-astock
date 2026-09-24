@@ -5,7 +5,7 @@ from .model_catalog import get_known_models
 
 # Providers whose model names are user-supplied and free-form, so any model
 # string is accepted without warning.
-_ANY_MODEL_PROVIDERS = ("ollama", "openrouter", "openai_compatible")
+_ANY_MODEL_PROVIDERS = ("ollama", "openrouter", "requesty", "openai_compatible")
 
 VALID_MODELS = {
     provider: models
@@ -17,7 +17,7 @@ VALID_MODELS = {
 def validate_model(provider: str, model: str) -> bool:
     """Check if model name is valid for the given provider.
 
-    For ollama, openrouter, openai_compatible - any model is accepted.
+    For ollama, openrouter, requesty, openai_compatible - any model is accepted.
     """
     provider_lower = provider.lower()
 

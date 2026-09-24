@@ -31,7 +31,7 @@ def _cli_endpoints() -> dict[str, str]:
 # 两侧都带 base URL、因而必须逐字一致的 provider。
 # 不含 minimax（只有客户端兜底有，CLI 的 provider 列表里没有这一项），
 # 也不含 azure / google / openai_compatible（CLI 侧 base_url 为 None，运行时再问）。
-_MUST_AGREE = {"deepseek", "glm", "ollama", "openrouter", "qwen", "xai"}
+_MUST_AGREE = {"deepseek", "glm", "ollama", "openrouter", "qwen", "requesty", "xai"}
 
 
 def test_cli_and_client_fallback_agree_on_endpoints():

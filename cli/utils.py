@@ -184,6 +184,58 @@ def select_openrouter_model() -> str:
     return choice
 
 
+def _fetch_requesty_models() -> List[Tuple[str, str]]:
+    """Fetch available models from Requesty, newest first.
+
+    Uses the curated managed list (no auth needed) and falls back to the
+    full catalog if that request fails.
+    """
+    import requests
+    for url in (
+        "https://router.requesty.ai/v1/models/managed",
+        "https://router.requesty.ai/v1/models",
+    ):
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            models = [
+                m for m in resp.json().get("data", [])
+                if m.get("id") and m.get("api", "chat") == "chat"
+            ]
+            models.sort(key=lambda m: m.get("created") or 0, reverse=True)
+            return [(m["id"], m["id"]) for m in models]
+        except Exception as e:
+            console.print(f"\n[yellow]Could not fetch Requesty models from {url}: {e}[/yellow]")
+    return []
+
+
+def select_requesty_model() -> str:
+    """Select a Requesty model from the newest available, or enter a custom ID."""
+    models = _fetch_requesty_models()
+
+    choices = [questionary.Choice(name, value=mid) for name, mid in models[:5]]
+    choices.append(questionary.Choice("Custom model ID", value="custom"))
+
+    choice = questionary.select(
+        "Select Requesty Model (latest available):",
+        choices=choices,
+        instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
+        style=questionary.Style([
+            ("selected", "fg:magenta noinherit"),
+            ("highlighted", "fg:magenta noinherit"),
+            ("pointer", "fg:magenta noinherit"),
+        ]),
+    ).ask()
+
+    if choice is None or choice == "custom":
+        return questionary.text(
+            "Enter Requesty model ID (e.g. openai/gpt-4o-mini):",
+            validate=lambda x: len(x.strip()) > 0 or "Please enter a model ID.",
+        ).ask().strip()
+
+    return choice
+
+
 def _prompt_custom_model_id() -> str:
     """Prompt user to type a custom model ID."""
     return questionary.text(
@@ -196,6 +248,9 @@ def _select_model(provider: str, mode: str) -> str:
     """Select a model for the given provider and mode (quick/deep)."""
     if provider.lower() == "openrouter":
         return select_openrouter_model()
+
+    if provider.lower() == "requesty":
+        return select_requesty_model()
 
     if provider.lower() == "openai_compatible":
         return _prompt_custom_model_id()
@@ -253,6 +308,7 @@ def select_llm_provider() -> tuple[str, str | None]:
         ("Qwen", "qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         ("GLM", "glm", "https://open.bigmodel.cn/api/paas/v4/"),
         ("OpenRouter", "openrouter", "https://openrouter.ai/api/v1"),
+        ("Requesty", "requesty", "https://router.requesty.ai/v1"),
         ("OpenAI-Compatible (custom base URL / 自定义 OpenAI 兼容网关)", "openai_compatible", None),
         ("Azure OpenAI", "azure", None),
         ("Ollama", "ollama", "http://localhost:11434/v1"),

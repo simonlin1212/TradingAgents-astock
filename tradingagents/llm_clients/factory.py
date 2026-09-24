@@ -9,7 +9,7 @@ from .base_client import BaseLLMClient
 # hard-coded vendor defaults (#77 / #81).
 _OPENAI_COMPATIBLE = (
     "openai", "xai", "deepseek", "qwen", "glm", "ollama", "openrouter", "minimax",
-    "openai_compatible",
+    "requesty", "openai_compatible",
 )
 
 
