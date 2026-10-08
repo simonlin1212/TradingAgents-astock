@@ -306,7 +306,8 @@ streamlit run web/app.py
 ### 功能
 
 - **配置记住**：侧栏选的供应商 / 模型 / Base URL / 订阅覆盖写入 `~/.tradingagents/llm_config.json`，重开标签页或重启后自动恢复（v0.5.17）
-- **模型自选**：侧边栏支持 10 个 LLM 供应商切换（MiniMax/DeepSeek/Qwen/GLM/OpenAI/Anthropic/Google/xAI/OpenRouter/Ollama），外加 **「OpenAI 兼容（自定义 base_url）」** 一档可接任意 OpenAI 兼容网关（9Router / AI Router / 自建代理）
+- **模型自选**：侧边栏支持 11 个 LLM 供应商切换（MiniMax/DeepSeek/Qwen/GLM/OpenAI/Anthropic/Google/xAI/OpenRouter/Ollama/Codex CLI），外加 **「OpenAI 兼容（自定义 base_url）」** 一档可接任意 OpenAI 兼容网关（9Router / AI Router / 自建代理）
+- **本机 Codex CLI**：可显式选择 `codex_cli`，使用本机 Codex CLI 登录；配置和认证模式会随侧栏保存（不会保存 API Key）
 - **一键分析**：输入 6 位 A 股代码 + 分析日期 +「数据起始日期」（默认本月第一天，可自定义技术分析回溯区间，支持按月/自定义时段分析），点击「开始分析」
 - **实时进度**：12 阶段 pipeline 实时显示（7 分析师 → 质量门控 → 辩论 → 风控 → 决策），所有已完成阶段的报告均可展开查看
 - **完整报告**：信号卡片（Buy/Hold/Sell）、7 份分析师报告、多空辩论、风控评估
@@ -327,7 +328,7 @@ streamlit run web/app.py
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `llm_provider` | `"minimax"` | LLM 提供商：`minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
+| `llm_provider` | `"minimax"` | LLM 提供商：`minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` / `codex_cli` |
 | `deep_think_llm` | `"MiniMax-M2.7"` | Research Manager + Portfolio Manager 用的模型 |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | 所有 Analyst / Researcher / Trader 用的模型 |
 | `backend_url` | `None` | 自定义 API 端点 / 第三方中转网关。可在 Web UI 侧边栏填写，或用 `.env` 的 `BACKEND_URL`；方便国内通过代理访问 Claude / OpenAI。**跑远程 Ollama 也是填这里**：`llm_provider` 选 `ollama`、`backend_url` 填 `http://<主机>:11434/v1`，不填则默认本机 `http://localhost:11434/v1`（#61） |
@@ -545,6 +546,33 @@ TradingAgents-Astock/
 本项目是 TauricResearch/TradingAgents 的 fork，继承 Apache 2.0 许可证。详见 [NOTICE](./NOTICE)。
 
 **作者：** Simon 林 · X [@linsizhen](https://x.com/linsizhen) · 邮箱：[simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)
+### 使用本机 Codex CLI（可选）
+
+`codex_cli` 让每次 LLM 调用通过本机 `codex exec` 执行。它与 `openai` provider 不同：`openai` 使用 OpenAI API，`codex_cli` 默认复用本机 Codex 的 ChatGPT 登录。需先安装并登录 Codex CLI：
+
+```bash
+codex login
+codex login status
+```
+
+在 Web 侧栏或交互式 CLI 中选择 **Codex CLI**，模型留空即使用本机 Codex CLI 的内置默认模型，也可以填写账号支持的模型 ID。为避免用户级 MCP、插件和其他工具影响行情分析，Codex 子进程会隔离用户配置；显式模型 ID 仍会传给 CLI。Python 配置示例：
+
+```python
+config.update({
+    "llm_provider": "codex_cli",
+    "quick_think_llm": "",  # 使用 CLI 默认模型
+    "deep_think_llm": "",   # 使用 CLI 默认模型
+    "codex_cli_auth_mode": "chatgpt",
+    # "codex_cli_path": "/path/to/codex",  # 可选；默认从 PATH 查找
+})
+```
+
+每次调用在临时空目录中以 read-only sandbox 启动，并受 `llm_timeout` 限制。运行前要求本机 Codex CLI 支持关闭内置工具；调用时会关闭 shell、MCP、插件、浏览器、图像等工具，并关闭 web search。分析师只会通过本项目的 LangGraph 工具循环请求行情工具。`role_llms` 也可将单个角色设为 `{"provider": "codex_cli", "model": ""}`。Codex CLI 自己管理输出上限与重试；项目的 `max_tokens`、`llm_max_retries` 和 `llm_retry_delay` 不会传给 Codex CLI。
+
+认证模式默认为 ChatGPT 登录。启动时检查 `codex login status`，登录不符或认证失败会停止分析，不会静默切换到 `openai` 或其他计费 provider。若显式设置 `codex_cli_auth_mode="api_key"`，必须配置 `CODEX_API_KEY` 或 `OPENAI_API_KEY`，请求将按 OpenAI API 用量计费；客户端会仅向 Codex 子进程传入 `CODEX_API_KEY`，密钥不会写入 Web 持久化文件。可用 `CODEX_CLI_PATH` 指定 Codex 可执行文件路径。
+
+Codex CLI 的模型可用性由 CLI 版本和账号决定。留空时使用 CLI 内置默认模型；显式模型不受当前登录支持时，CLI 会报错，请填写账号可用的模型 ID。
+
 ### 用个人 Claude 订阅额度（可选，v0.4.0 新增）
 
 让节点经 Claude Agent SDK 走你**个人 Claude Pro/Max 订阅额度**，而不是按 token 计费的 Anthropic API。

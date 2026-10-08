@@ -5,6 +5,8 @@ from __future__ import annotations
 import streamlit as st
 
 from web.progress import PIPELINE_STAGES, ProgressTracker
+from web.signal_display import final_rating_display, trader_action_display
+from tradingagents.agents.utils.rating import parse_rating
 
 
 def _status_badge(status: str) -> str:
@@ -43,6 +45,24 @@ def render_progress(tracker: ProgressTracker) -> None:
 
     if tracker.is_paused:
         st.caption("当前分析已暂停。")
+
+    run = getattr(tracker, "model_config", {})
+    if run.get("provider") == "codex_cli":
+        st.caption(
+            f"本次 Codex 配置：快速 {run.get('quick') or 'CLI 默认（实际 ID 未记录）'} · "
+            f"深度 {run.get('deep') or 'CLI 默认（实际 ID 未记录）'} · "
+            f"推理强度 {run.get('effort') or 'CLI 默认'}"
+        )
+
+    final_report = tracker.stage_reports.get("pm")
+    if final_report:
+        rating = parse_rating(final_report, default="")
+        _, label, meaning = final_rating_display(rating)
+        st.success(f"最终评级：{label}（{rating or '未识别'}）。{meaning}。")
+    elif trader_report := tracker.stage_reports.get("trader"):
+        action = trader_action_display(trader_report)
+        if action:
+            st.info(f"交易员阶段建议：{action}。风控和最终决策仍在进行，以最终评级为准。")
 
     completed = len(tracker.completed_stages)
     total = len(PIPELINE_STAGES)
@@ -104,7 +124,7 @@ def render_progress(tracker: ProgressTracker) -> None:
         st.error(f"错误: {tracker.error}")
 
     completed_reports = [
-        (stage["name"], stage["icon"], tracker.stage_reports[stage["id"]])
+        (stage["id"], stage["name"], stage["icon"], tracker.stage_reports[stage["id"]])
         for stage in PIPELINE_STAGES
         if stage["id"] in tracker.stage_reports
     ]
@@ -115,7 +135,12 @@ def render_progress(tracker: ProgressTracker) -> None:
             f"REPORTS ({len(completed_reports)})</div>",
             unsafe_allow_html=True,
         )
-        for name, icon, report in reversed(completed_reports):
-            is_latest = (name == completed_reports[-1][0])
-            with st.expander(f"{icon} {name}", expanded=is_latest):
+        for stage_id, name, icon, report in reversed(completed_reports):
+            is_latest = stage_id == completed_reports[-1][0]
+            heading = f"{icon} {name}" + ("（中间阶段建议）" if stage_id == "trader" else "")
+            with st.expander(heading, expanded=is_latest):
+                if stage_id == "trader":
+                    action = trader_action_display(report)
+                    if action:
+                        st.info(f"这一阶段的建议：{action}；请以完成后的最终评级为准。")
                 st.markdown(report[:3000])

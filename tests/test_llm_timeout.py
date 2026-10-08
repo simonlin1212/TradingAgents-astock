@@ -400,6 +400,32 @@ class TestResilienceFollowsTargetProvider:
         for key in ("max_retries", "app_retries", "app_retry_delay"):
             assert key not in spec, f"anthropic 降级不该带 {key}：{spec.get(key)}"
 
+    def test_codex_fallback_preserves_cli_authentication(self, tmp_path):
+        _, spec = _build_graph(tmp_path, {
+            "llm_provider": "codex_cli",
+            "deep_think_provider_override": "claude_agent_sdk",
+            "codex_cli_auth_mode": "api_key",
+            "codex_cli_path": "/custom/codex",
+            "codex_cli_reasoning_effort": "high",
+            "llm_timeout": 42,
+        })
+        assert spec["provider"] == "codex_cli"
+        assert spec["auth_mode"] == "api_key"
+        assert spec["cli_path"] == "/custom/codex"
+        assert spec["reasoning_effort"] == "high"
+        assert spec["timeout"] == 42
+
+    @pytest.mark.parametrize("model", [None, ""])
+    def test_explicit_codex_fallback_accepts_default_model(self, tmp_path, model):
+        _, spec = _build_graph(tmp_path, {
+            "llm_provider": "deepseek",
+            "deep_think_provider_override": "claude_agent_sdk",
+            "agent_sdk_fallback_provider": "codex_cli",
+            "agent_sdk_fallback_model": model,
+        })
+        assert spec["provider"] == "codex_cli"
+        assert spec["model"] == ""
+
     def test_fallback_provider_spelling_does_not_change_behaviour(self, tmp_path):
         # 全仓唯一一处**没有** .lower() 的 provider 比较就在这儿：写成 "DeepSeek"
         # 时同一家被判成跨厂商 ⇒ backend_url 被扔掉，降级请求发去官方默认端点

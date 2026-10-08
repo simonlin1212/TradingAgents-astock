@@ -282,7 +282,7 @@ Open your browser and navigate to `http://localhost:8501`.
 ### Features
 
 - **Remembers your setup**: the provider / models / Base URL / subscription scope chosen in the sidebar are written to `~/.tradingagents/llm_config.json` and restored after reopening the tab or restarting (v0.5.17)
-- **Model Selection**: Sidebar supports switching between 10 LLM providers (MiniMax/DeepSeek/Qwen/GLM/OpenAI/Anthropic/Google/xAI/OpenRouter/Ollama), plus **"OpenAI Compatible (custom base_url)"** for connecting to any OpenAI-compatible gateway (9Router / AI Router / self-hosted proxy)
+- **Model Selection**: Sidebar supports switching between 11 LLM providers (MiniMax/DeepSeek/Qwen/GLM/OpenAI/Anthropic/Google/xAI/OpenRouter/Ollama/Codex CLI), plus **"OpenAI Compatible (custom base_url)"** for connecting to any OpenAI-compatible gateway (9Router / AI Router / self-hosted proxy)
 - **One-Click Analysis**: Enter a 6-digit A-share stock code + analysis date + "Data Start Date" (defaults to the first day of the current month, allows customizing the technical analysis lookback period, supports monthly/custom period analysis), then click "Start Analysis"
 - **Real-Time Progress**: 12-stage pipeline displayed in real-time (7 Analysts → Quality Gate → Debate → Risk Control → Decision), with expandable reports for all completed stages
 - **Complete Report**: Signal cards (Buy/Hold/Sell), 7 analyst reports, bull-bear debate, risk control assessment
@@ -302,7 +302,7 @@ All configuration is passed in through the `config` dictionary. Complete options
 
 | Parameter | Default Value | Description |
 |------|--------|------|
-| `llm_provider` | `"minimax"` | LLM provider: `minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
+| `llm_provider` | `"minimax"` | LLM provider: `minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` / `codex_cli` |
 | `deep_think_llm` | `"MiniMax-M2.7"` | Model used by the Research Manager + Portfolio Manager |
 | `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | Model used by all Analysts / Researchers / Traders |
 | `backend_url` | `None` | Custom API endpoint / third-party relay gateway. Can be filled in via the Web UI sidebar or the `.env` file's `BACKEND_URL`; useful for accessing Claude / OpenAI from within China via a proxy. **This is also how you reach a remote Ollama**: set `llm_provider` to `ollama` and `backend_url` to `http://<host>:11434/v1`; leaving it unset defaults to the local `http://localhost:11434/v1` (#61) |
@@ -362,6 +362,33 @@ Notes:
 
 **Q: Using DeepSeek/Tongyi/Zhipu but getting `OpenAIError: The api_key client option must be set ... OPENAI_API_KEY`?**
 Each provider uses **its own environment variable**, not `OPENAI_API_KEY`: DeepSeek=`DEEPSEEK_API_KEY`, Tongyi=`DASHSCOPE_API_KEY`, Zhipu=`ZHIPU_API_KEY`, MiniMax=`MINIMAX_API_KEY`, xAI=`XAI_API_KEY`, OpenRouter=`OPENROUTER_API_KEY`, OpenAI-Compatible (Custom)=`OPENAI_COMPATIBLE_API_KEY`. Set the corresponding variable in the `.env` file at the project root and **restart** the program. (Starting from v0.2.12, if the key is missing, it will directly prompt which variable name to use.)
+
+### Using the local Codex CLI (optional)
+
+The `codex_cli` provider runs each LLM call through the local `codex exec` command. It is separate from the `openai` provider: `openai` calls the OpenAI API, while `codex_cli` defaults to the ChatGPT login already configured in Codex CLI. Install and sign in first:
+
+```bash
+codex login
+codex login status
+```
+
+Select **Codex CLI** in the Web sidebar or interactive CLI. Leave the model ID blank to use the CLI's built-in default model, or enter a model ID supported by your account. The subprocess isolates user configuration so user-level MCP servers, plugins, and tools cannot affect market analysis. Explicit model IDs are still passed to Codex CLI. Python configuration:
+
+```python
+config.update({
+    "llm_provider": "codex_cli",
+    "quick_think_llm": "",  # use the CLI default model
+    "deep_think_llm": "",   # use the CLI default model
+    "codex_cli_auth_mode": "chatgpt",
+    # "codex_cli_path": "/path/to/codex",  # optional; otherwise searched on PATH
+})
+```
+
+Each call runs in an empty temporary directory with a read-only sandbox and is bounded by `llm_timeout`. Before use, the client checks that Codex CLI supports disabling its built-in tools. It disables shell, MCP, plugins, browser, image, and other tools, and turns off web search. Analyst market data requests go through this project's LangGraph tools. `role_llms` can also route one role with `{"provider": "codex_cli", "model": ""}`. Codex CLI controls its own output limit and retry behavior; this adapter does not pass through the project's `max_tokens`, `llm_max_retries`, or `llm_retry_delay` settings.
+
+ChatGPT login is the default authentication mode. The client checks `codex login status` and stops on a login or authentication mismatch; it never silently switches to `openai` or another paid provider. If you explicitly set `codex_cli_auth_mode="api_key"`, configure `CODEX_API_KEY` or `OPENAI_API_KEY`; calls are billed by OpenAI API usage. The client passes the key to the Codex child process only as `CODEX_API_KEY`; it is not written to Web persistence. Set `CODEX_CLI_PATH` to use a nonstandard executable path.
+
+Available models depend on the Codex CLI version and account. Leaving the model blank uses the CLI's built-in default; if an explicit model is unavailable to the current login, the CLI reports an error. Enter a model ID supported by your account.
 
 **Q: Want to connect to an OpenAI-compatible third-party gateway/relay (9Router, AI Router, self-built proxy) with a custom base_url + model?**
 Use the **「OpenAI-Compatible (Custom base_url)」** option (added in v0.2.20). In the Web sidebar, select it under "LLM Provider" → Manually enter the model name supported by your gateway under "Fast/Deep Think Model ID" → Enter your gateway address under "API Base URL" (e.g., `https://your-relay.example/v1`) → Set `OPENAI_COMPATIBLE_API_KEY=your_key` in `.env` (it also accepts `OPENAI_API_KEY`). For CLI, after selecting `OpenAI-Compatible`, it will prompt for the Base URL. It uses standard Chat Completions (not OpenAI Responses API, for best compatibility), and the model name can be freely entered without being restricted by the built-in list. The equivalent configuration is: `llm_provider="openai_compatible"` + `backend_url="<your_gateway>"` + `deep_think_llm/quick_think_llm="<your_model>"`.

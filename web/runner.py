@@ -175,6 +175,13 @@ def run_analysis_in_thread(
     """Launch the pipeline in a daemon thread. Returns the thread handle."""
     tracker.ticker = ticker
     tracker.trade_date = trade_date
+    # Keep only display-safe settings; never copy API keys or the full config.
+    tracker.model_config = {
+        "provider": str(config.get("llm_provider") or ""),
+        "quick": str(config.get("quick_think_llm") or ""),
+        "deep": str(config.get("deep_think_llm") or ""),
+        "effort": str(config.get("codex_cli_reasoning_effort") or ""),
+    }
     tracker.is_running = True
     tracker.mark_stage_active("market")
     record_incomplete_task(

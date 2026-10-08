@@ -164,6 +164,11 @@ def _build_config() -> dict:
     # Optional third-party / proxy endpoint. Sidebar input wins, else .env BACKEND_URL.
     backend_url = (st.session_state.get("llm_base_url") or os.getenv("BACKEND_URL") or "").strip()
     config["backend_url"] = backend_url or None
+    config["codex_cli_auth_mode"] = st.session_state.get("codex_cli_auth_mode", "chatgpt")
+    config["codex_cli_path"] = (st.session_state.get("codex_cli_path") or "").strip() or None
+    config["codex_cli_reasoning_effort"] = st.session_state.get("codex_cli_reasoning_effort")
+    if config["llm_provider"] == "codex_cli":
+        config["backend_url"] = None
     config["data_vendors"] = {
         "core_stock_apis": "a_stock",
         "technical_indicators": "a_stock",
@@ -260,6 +265,7 @@ elif tracker and tracker.is_complete:
         tracker.trade_date,
         tracker.signal,
         elapsed=tracker.elapsed,
+        model_config=getattr(tracker, "model_config", {}),
     )
 
 # State 4: Analysis errored

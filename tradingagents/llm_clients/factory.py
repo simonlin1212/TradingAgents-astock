@@ -55,6 +55,10 @@ def create_llm_client(
         from .claude_agent_sdk_client import ClaudeAgentSDKClient
         return ClaudeAgentSDKClient(model, base_url, **kwargs)
 
+    if provider_lower == "codex_cli":
+        from .codex_cli_client import CodexCLIClient
+        return CodexCLIClient(model, base_url, **kwargs)
+
     if provider_lower == "google":
         from .google_client import GoogleClient
         return GoogleClient(model, base_url, **kwargs)

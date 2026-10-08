@@ -9,6 +9,14 @@ ProviderModeOptions = Dict[str, Dict[str, List[ModelOption]]]
 
 
 MODEL_OPTIONS: ProviderModeOptions = {
+    "codex_cli": {
+        "quick": [
+            ("Use Codex CLI default model", ""),
+        ],
+        "deep": [
+            ("Use Codex CLI default model", ""),
+        ],
+    },
     "openai": {
         "quick": [
             ("GPT-5.4 Mini - Fast, strong coding and tool use", "gpt-5.4-mini"),

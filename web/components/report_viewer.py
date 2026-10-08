@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 import re
 from typing import Any
 
@@ -14,19 +15,11 @@ from tradingagents.dataflows.missing_data import (
 )
 from web.pdf_export import generate_markdown, generate_pdf
 from web.stock_display import normalize_stock_mentions, stock_display_label
+from web.signal_display import final_rating_display, trader_action_display
 
 
 def _strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
-
-
-def _signal_style(signal: str) -> tuple[str, str]:
-    s = signal.upper()
-    if "BUY" in s:
-        return "#22c55e", "买入"
-    if "SELL" in s:
-        return "#ef4444", "卖出"
-    return "#fbbf24", "持有"
 
 
 _ANALYST_SECTIONS = [
@@ -171,10 +164,11 @@ def render_report(
     trade_date: str,
     signal: str,
     elapsed: float | None = None,
+    model_config: dict[str, str] | None = None,
 ) -> None:
     """Render the full analysis report."""
 
-    color, cn_signal = _signal_style(signal)
+    color, cn_signal, position_meaning = final_rating_display(signal)
     ticker_label = stock_display_label(ticker, final_state)
 
     stats_html = ""
@@ -192,18 +186,32 @@ def render_report(
             text-align: center;
             margin: 1rem 0 2rem;
         ">
-            <div style="font-size:0.9rem; color:#888; letter-spacing:2px;">TRADING SIGNAL</div>
+            <div style="font-size:0.9rem; color:#888; letter-spacing:2px;">最终评级 · 风控后结论</div>
             <div style="font-size:3.5rem; font-weight:900; color:{color}; margin:0.3rem 0;">
-                {signal.upper()}
+                {escape(cn_signal)}
             </div>
+            <div style="font-size:1rem; color:#aaa;">{escape(signal.upper())}</div>
             <div style="font-size:1.2rem; color:#f5f1eb;">
-                {ticker_label} · {trade_date}
+                {escape(ticker_label)} · {escape(trade_date)}
             </div>
             {stats_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    if model_config and model_config.get("provider") == "codex_cli":
+        st.caption(
+            f"本次 Codex 配置：快速 {model_config.get('quick') or 'CLI 默认（实际 ID 未记录）'} · "
+            f"深度 {model_config.get('deep') or 'CLI 默认（实际 ID 未记录）'} · "
+            f"推理强度 {model_config.get('effort') or 'CLI 默认'}"
+        )
+
+    st.info(f"评级含义：{position_meaning}。交易员的阶段建议可能与最终评级不同，请以此处为准。")
+    final_decision = final_state.get("final_trade_decision", "")
+    if final_decision:
+        st.markdown("### 👔 最终决策依据")
+        st.markdown(_display_report_text(final_decision, ticker, final_state))
 
     st.caption("⚠️ 本报告由 AI 自动生成，仅供学习研究，不构成投资建议。")
 
@@ -269,7 +277,7 @@ def render_report(
 
     inv_plan = final_state.get("investment_plan", "")
     if inv_plan:
-        st.markdown("### 👔 最终投资建议")
+        st.markdown("### 👔 研究经理建议（中间阶段）")
         st.markdown(_display_report_text(inv_plan, ticker, final_state))
         st.markdown("---")
 
@@ -295,7 +303,10 @@ def render_report(
 
     trader_decision = final_state.get("trader_investment_decision", "")
     if trader_decision:
-        with st.expander("💹 交易员决策", expanded=False):
+        with st.expander("💹 交易员建议（中间阶段）", expanded=False):
+            action = trader_action_display(str(trader_decision))
+            if action:
+                st.info(f"交易员建议：{action}；最终结论请看页面顶部的最终评级。")
             st.markdown(_display_report_text(trader_decision, ticker, final_state))
 
     risk = final_state.get("risk_debate_state")

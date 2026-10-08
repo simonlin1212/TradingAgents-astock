@@ -150,6 +150,20 @@ def test_spec_without_model_raises(monkeypatch):
         )
 
 
+def test_codex_cli_role_can_use_cli_default_model(monkeypatch):
+    resolved, created = build(
+        {
+            "llm_provider": "openai",
+            "codex_cli_auth_mode": "chatgpt",
+            "role_llms": {"bull": {"provider": "codex_cli", "model": ""}},
+        },
+        monkeypatch,
+    )
+
+    assert created == [("codex_cli", "", None)]
+    assert resolved["bull"].tag == ("codex_cli", "", None)
+
+
 def test_identical_specs_share_one_instance(monkeypatch):
     """两个角色配同一个模型，只该建一个实例，不该开两条连接。"""
     cfg = {

@@ -15,6 +15,10 @@ DEFAULT_CONFIG = {
     "llm_provider": "openai",
     "deep_think_llm": "gpt-5.4",
     "quick_think_llm": "gpt-5.4-mini",
+    # Optional local Codex CLI provider. Empty models use the CLI's own default.
+    "codex_cli_path": None,
+    "codex_cli_auth_mode": "chatgpt",  # "chatgpt" subscription or explicit "api_key" billing
+    "codex_cli_reasoning_effort": None,
     # When None, each provider's client falls back to its own default endpoint
     # (api.openai.com for OpenAI, generativelanguage.googleapis.com for Gemini, ...).
     # The CLI overrides this per provider when the user picks one. Keeping a

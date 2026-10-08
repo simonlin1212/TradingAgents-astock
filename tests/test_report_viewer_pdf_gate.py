@@ -231,6 +231,31 @@ def test_no_missing_data_shows_disabled_clean_status(monkeypatch):
     assert any(download["label"] == "📄 下载 PDF" for download in fake_st.downloads)
 
 
+def test_final_underweight_and_decision_are_visible_above_intermediate_plan(monkeypatch):
+    fake_st = _FakeStreamlit()
+    report_viewer = _load_report_viewer(monkeypatch, fake_st)
+    pdf_calls: list[tuple[Any, ...]] = []
+    _install_report_viewer_fakes_without_missing(monkeypatch, report_viewer, pdf_calls)
+
+    report_viewer.render_report(
+        {
+            "final_trade_decision": "**Rating**: Underweight\n\n**Executive Summary**: 审慎降低敞口。",
+            "investment_plan": "研究经理认为应继续观察。",
+            "trader_investment_decision": "**Action**: Sell",
+        },
+        ticker="002371",
+        trade_date="2026-09-29",
+        signal="Underweight",
+    )
+
+    output = "\n".join(fake_st.markdowns)
+    assert "低配 / 减仓" in output
+    assert "审慎降低敞口" in output
+    assert output.index("最终决策依据") < output.index("研究经理建议（中间阶段）")
+    assert any("持仓：倾向降低仓位" in message for kind, message in fake_st.messages if kind == "info")
+    assert any("交易员建议：卖出 / 减仓" in message for kind, message in fake_st.messages if kind == "info")
+
+
 def test_retry_missing_button_is_above_missing_task_details(monkeypatch):
     fake_st = _FakeStreamlit()
     report_viewer = _load_report_viewer(monkeypatch, fake_st)

@@ -200,6 +200,19 @@ def _select_model(provider: str, mode: str) -> str:
     if provider.lower() == "openai_compatible":
         return _prompt_custom_model_id()
 
+    if provider.lower() == "codex_cli":
+        choice = questionary.select(
+            f"Select Your [{mode.title()}-Thinking Codex CLI Model]:",
+            choices=[
+                questionary.Choice("Use Codex CLI default model", value=""),
+                questionary.Choice("Enter a model ID", value="custom"),
+            ],
+        ).ask()
+        if choice is None:
+            console.print(f"\n[red]No {mode} Codex CLI model selected. Exiting...[/red]")
+            exit(1)
+        return _prompt_custom_model_id() if choice == "custom" else choice
+
     if provider.lower() == "azure":
         return questionary.text(
             f"Enter Azure deployment name ({mode}-thinking):",
@@ -246,6 +259,7 @@ def select_llm_provider() -> tuple[str, str | None]:
     # (display_name, provider_key, base_url)
     PROVIDERS = [
         ("OpenAI", "openai", "https://api.openai.com/v1"),
+        ("Codex CLI（本机登录）", "codex_cli", None),
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("xAI", "xai", "https://api.x.ai/v1"),

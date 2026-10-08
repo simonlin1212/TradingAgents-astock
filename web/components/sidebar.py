@@ -45,6 +45,7 @@ def _load_saved_llm_config() -> None:
     except ValueError:
         idx = 0
     st.session_state.setdefault("llm_provider_idx", idx)
+    st.session_state.setdefault("llm_provider", _PROVIDER_KEYS[idx])
     st.session_state.setdefault("quick_model_idx", cfg.get("quick_model_idx", 0))
     st.session_state.setdefault("deep_model_idx", cfg.get("deep_model_idx", 0))
     st.session_state.setdefault("llm_base_url", cfg.get("llm_base_url", ""))
@@ -55,6 +56,11 @@ def _load_saved_llm_config() -> None:
     )
     if cfg.get("agent_sdk_model"):
         st.session_state.setdefault("agent_sdk_model", cfg["agent_sdk_model"])
+    st.session_state.setdefault("codex_cli_auth_mode", cfg.get("codex_cli_auth_mode", "chatgpt"))
+    st.session_state.setdefault("codex_cli_path", cfg.get("codex_cli_path", ""))
+    st.session_state.setdefault("codex_cli_quick_model", cfg.get("codex_cli_quick_model", ""))
+    st.session_state.setdefault("codex_cli_deep_model", cfg.get("codex_cli_deep_model", ""))
+    st.session_state.setdefault("codex_cli_reasoning_effort", cfg.get("codex_cli_reasoning_effort"))
     for key in ("custom_quick_model", "custom_deep_model"):
         if key in cfg and cfg[key]:
             st.session_state.setdefault(key, cfg[key])
@@ -68,6 +74,11 @@ def _save_llm_config() -> None:
         "deep_model_idx": st.session_state.get("deep_model_idx", 0),
         "llm_base_url": st.session_state.get("llm_base_url", ""),
         "subscription_scope": st.session_state.get("subscription_scope", "off"),
+        "codex_cli_auth_mode": st.session_state.get("codex_cli_auth_mode", "chatgpt"),
+        "codex_cli_path": st.session_state.get("codex_cli_path", ""),
+        "codex_cli_quick_model": st.session_state.get("codex_cli_quick_model", ""),
+        "codex_cli_deep_model": st.session_state.get("codex_cli_deep_model", ""),
+        "codex_cli_reasoning_effort": st.session_state.get("codex_cli_reasoning_effort"),
     }
     if st.session_state.get("agent_sdk_model"):
         cfg["agent_sdk_model"] = st.session_state["agent_sdk_model"]
@@ -90,6 +101,7 @@ _PROVIDERS: list[tuple[str, str]] = [
     ("通义千问 Qwen", "qwen"),
     ("智谱 GLM", "glm"),
     ("OpenAI", "openai"),
+    ("Codex CLI（本机 Codex 登录）", "codex_cli"),
     ("Anthropic", "anthropic"),
     ("Google Gemini", "google"),
     ("xAI Grok", "xai"),
@@ -100,6 +112,83 @@ _PROVIDERS: list[tuple[str, str]] = [
 
 _PROVIDER_DISPLAY = [name for name, _ in _PROVIDERS]
 _PROVIDER_KEYS = [key for _, key in _PROVIDERS]
+
+
+def _setting_widget_key(setting: str, default="") -> str:
+    """Keep conditional widget values when Streamlit removes hidden widget keys."""
+    widget_key = f"_llm_widget_{setting}"
+    st.session_state.setdefault(widget_key, st.session_state.get(setting, default))
+    return widget_key
+
+
+def _text_setting(label: str, setting: str, **kwargs) -> str:
+    value = st.text_input(label, key=_setting_widget_key(setting), **kwargs)
+    st.session_state[setting] = value
+    return value
+
+
+def _codex_model_options() -> list[str]:
+    """Offer visible model IDs from the local Codex cache when available."""
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    try:
+        cache = json.loads((codex_home / "models_cache.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    models = cache.get("models", []) if isinstance(cache, dict) else []
+    if not isinstance(models, list):
+        return []
+    return list(dict.fromkeys(
+        model["slug"] for model in models
+        if isinstance(model, dict)
+        and model.get("visibility") == "list"
+        and isinstance(model.get("slug"), str)
+        and model["slug"].strip()
+    ))
+
+
+def _codex_model_setting(tier: str, label: str, options: list[str]) -> str:
+    setting = f"codex_cli_{tier}_model"
+    current = str(st.session_state.get(setting) or "").strip()
+    custom = "__custom__"
+    choice_setting = f"{setting}_choice"
+    initial = current if current in options else custom if current else ""
+    choices = ["", *options, custom]
+    widget_key = _setting_widget_key(choice_setting, initial)
+    if st.session_state[widget_key] not in choices:
+        # Codex can refresh its cache while the Web session is open.
+        st.session_state[widget_key] = custom if current else ""
+    choice = st.selectbox(
+        label,
+        options=choices,
+        format_func=lambda value: (
+            "CLI 默认（实际 ID 未知）" if value == "" else
+            "自定义模型 ID" if value == custom else value
+        ),
+        key=widget_key,
+        help="本机 Codex 缓存中的模型 ID 可能过期，实际可用性由 CLI 在运行时校验。",
+    )
+    st.session_state[choice_setting] = choice
+    if choice == custom:
+        model = _text_setting("自定义模型 ID", setting, placeholder="例如 gpt-6-sol")
+    else:
+        model = choice
+        st.session_state[setting] = model
+    return model.strip()
+
+
+def _model_index_widget_key(provider: str, tier: str, count: int,
+                            previous_provider: str | None) -> str:
+    # Distinct widget keys also prevent one provider's index from being out of
+    # range or replacing another provider's choice when the selector changes.
+    setting = f"{provider}_{tier}_model_idx"
+    if setting not in st.session_state:
+        initial = st.session_state.get(f"{tier}_model_idx", 0) if previous_provider == provider else 0
+        st.session_state[setting] = initial if isinstance(initial, int) and 0 <= initial < count else 0
+    widget_key = _setting_widget_key(setting, 0)
+    value = st.session_state[widget_key]
+    if not isinstance(value, int) or not 0 <= value < count:
+        st.session_state[widget_key] = 0
+    return widget_key
 
 
 def _resolve_user_input(raw: str) -> tuple[str, str | None]:
@@ -201,6 +290,7 @@ def _render_analysis_controls(raw_ticker: str, trade_date_value: date) -> None:
 def _render_llm_config() -> None:
     """Render LLM provider and model selection controls."""
 
+    previous_provider = st.session_state.get("llm_provider")
     provider_idx = st.selectbox(
         "LLM 供应商",
         range(len(_PROVIDERS)),
@@ -211,7 +301,37 @@ def _render_llm_config() -> None:
     provider_key = _PROVIDER_KEYS[provider_idx]
     st.session_state["llm_provider"] = provider_key
 
-    if provider_key in MODEL_OPTIONS:
+    if provider_key == "codex_cli":
+        codex_models = _codex_model_options()
+        quick_model = _codex_model_setting("quick", "快速思考 Codex 模型", codex_models)
+        deep_model = _codex_model_setting("deep", "深度思考 Codex 模型", codex_models)
+        st.session_state["quick_think_llm"] = quick_model
+        st.session_state["deep_think_llm"] = deep_model
+        effort_choice = st.selectbox(
+            "Codex 推理强度（快速/深度共用）",
+            options=["default", "low", "medium", "high", "xhigh"],
+            format_func=lambda value: {
+                "default": "CLI 默认（强度未指定）",
+                "low": "低 · low", "medium": "中 · medium",
+                "high": "高 · high", "xhigh": "很高 · xhigh",
+            }[value],
+            key=_setting_widget_key(
+                "codex_cli_reasoning_effort_choice",
+                st.session_state.get("codex_cli_reasoning_effort") or "default",
+            ),
+            help="传给 Codex CLI 的 model_reasoning_effort；具体可用强度取决于模型。",
+        )
+        st.session_state["codex_cli_reasoning_effort_choice"] = effort_choice
+        effort = None if effort_choice == "default" else effort_choice
+        st.session_state["codex_cli_reasoning_effort"] = effort
+        if not quick_model.strip() or not deep_model.strip():
+            st.caption("留空的模型会由 Codex CLI 自行选默认值；当前实现无法确认该默认值的实际模型 ID。若要明确知道本次使用的模型，请填写模型 ID。")
+        st.caption(
+            f"将使用：快速 {quick_model.strip() or 'CLI 默认（ID 未知）'} · "
+            f"深度 {deep_model.strip() or 'CLI 默认（ID 未知）'} · "
+            f"推理强度 {effort or 'CLI 默认'}"
+        )
+    elif provider_key in MODEL_OPTIONS:
         quick_options = MODEL_OPTIONS[provider_key]["quick"]
         deep_options = MODEL_OPTIONS[provider_key]["deep"]
 
@@ -224,45 +344,68 @@ def _render_llm_config() -> None:
             "快速思考模型",
             range(len(quick_options)),
             format_func=lambda i: quick_labels[i],
-            key="quick_model_idx",
+            key=_model_index_widget_key(provider_key, "quick", len(quick_options), previous_provider),
             help="用于常规分析任务，速度优先",
         )
+        st.session_state[f"{provider_key}_quick_model_idx"] = quick_idx
+        st.session_state["quick_model_idx"] = quick_idx
         st.session_state["quick_think_llm"] = quick_values[quick_idx]
 
         deep_idx = st.selectbox(
             "深度思考模型",
             range(len(deep_options)),
             format_func=lambda i: deep_labels[i],
-            key="deep_model_idx",
+            key=_model_index_widget_key(provider_key, "deep", len(deep_options), previous_provider),
             help="用于辩论/决策等需要深度推理的任务",
         )
+        st.session_state[f"{provider_key}_deep_model_idx"] = deep_idx
+        st.session_state["deep_model_idx"] = deep_idx
         st.session_state["deep_think_llm"] = deep_values[deep_idx]
     else:
-        custom_quick = st.text_input("快速思考模型 ID", key="custom_quick_model")
-        custom_deep = st.text_input("深度思考模型 ID", key="custom_deep_model")
+        custom_quick = _text_setting("快速思考模型 ID", "custom_quick_model")
+        custom_deep = _text_setting("深度思考模型 ID", "custom_deep_model")
         st.session_state["quick_think_llm"] = custom_quick
         st.session_state["deep_think_llm"] = custom_deep
 
-    base_url_required = provider_key == "openai_compatible"
-    st.text_input(
-        "API Base URL（第三方/代理" + ("·必填" if base_url_required else "，可选") + "）",
-        key="llm_base_url",
-        placeholder="例: https://your-relay.example/v1",
-        help=(
-            "通过第三方中转/代理访问模型时填写网关地址；留空则用所选供应商的官方地址。"
-            "API Key 仍从 .env 读取，每个供应商用各自的环境变量——"
-            "OpenAI=OPENAI_API_KEY、DeepSeek=DEEPSEEK_API_KEY、"
-            "通义=DASHSCOPE_API_KEY、智谱=ZHIPU_API_KEY、MiniMax=MINIMAX_API_KEY、"
-            "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、xAI=XAI_API_KEY、"
-            "OpenAI 兼容（自定义）=OPENAI_COMPATIBLE_API_KEY（也接受 OPENAI_API_KEY）。"
-            "也可在 .env 里设 BACKEND_URL 代替此处。"
-        ),
-    )
-    if base_url_required:
-        st.caption(
-            "已选「OpenAI 兼容（自定义）」：**Base URL 必填**（你的网关，走标准 Chat "
-            "Completions），模型 ID 手动填写，Key 在 .env 设 `OPENAI_COMPATIBLE_API_KEY`。"
+    if provider_key != "codex_cli":
+        base_url_required = provider_key == "openai_compatible"
+        _text_setting(
+            "API Base URL（第三方/代理" + ("·必填" if base_url_required else "，可选") + "）",
+            "llm_base_url",
+            placeholder="例: https://your-relay.example/v1",
+            help=(
+                "通过第三方中转/代理访问模型时填写网关地址；留空则用所选供应商的官方地址。"
+                "API Key 仍从 .env 读取，每个供应商用各自的环境变量——"
+                "OpenAI=OPENAI_API_KEY、DeepSeek=DEEPSEEK_API_KEY、"
+                "通义=DASHSCOPE_API_KEY、智谱=ZHIPU_API_KEY、MiniMax=MINIMAX_API_KEY、"
+                "Claude=ANTHROPIC_API_KEY、OpenRouter=OPENROUTER_API_KEY、xAI=XAI_API_KEY、"
+                "OpenAI 兼容（自定义）=OPENAI_COMPATIBLE_API_KEY（也接受 OPENAI_API_KEY）。"
+                "也可在 .env 里设 BACKEND_URL 代替此处。"
+            ),
         )
+        if base_url_required:
+            st.caption(
+                "已选「OpenAI 兼容（自定义）」：**Base URL 必填**（你的网关，走标准 Chat "
+                "Completions），模型 ID 手动填写，Key 在 .env 设 `OPENAI_COMPATIBLE_API_KEY`。"
+            )
+    else:
+        auth_widget_key = _setting_widget_key("codex_cli_auth_mode", "chatgpt")
+        auth_mode = st.selectbox(
+            "Codex CLI 认证方式",
+            options=["chatgpt", "api_key"],
+            format_func=lambda value: (
+                "ChatGPT 登录 / 订阅额度" if value == "chatgpt"
+                else "OpenAI API Key / 按 API 用量计费"
+            ),
+            key=auth_widget_key,
+            help="ChatGPT 模式使用本机 `codex login` 会话。API Key 模式只在明确选择后读取 CODEX_API_KEY 或 OPENAI_API_KEY，并按 API 计费。",
+        )
+        st.session_state["codex_cli_auth_mode"] = auth_mode
+        if auth_mode == "chatgpt":
+            st.caption("运行前核验 `codex login status` 必须显示 ChatGPT 登录；认证失败时停止，不会改用 OpenAI API。")
+        else:
+            st.caption("此模式会产生 OpenAI API 费用。请在环境变量 `CODEX_API_KEY` 或 `OPENAI_API_KEY` 中配置 Key；Key 不会写入配置文件。")
+        _text_setting("Codex CLI 可执行文件（留空则查找 PATH）", "codex_cli_path", placeholder="codex")
 
     # ── 个人 Claude 订阅额度（可选，仅个人自用）────────────────────────
     _scope_labels = [
@@ -286,9 +429,9 @@ def _render_llm_config() -> None:
     if scope != "off":
         # 用别名而非写死版本号：claude CLI 的 opus/sonnet 恒指向最新模型。
         st.session_state.setdefault("agent_sdk_model", "opus")
-        st.text_input(
+        _text_setting(
             "订阅使用的 Claude 模型",
-            key="agent_sdk_model",
+            "agent_sdk_model",
             help=(
                 "填别名 opus / sonnet（恒指向最新模型，推荐）或完整模型 id。"
                 "撞额度/失败时自动降级到上面选的供应商 + 对应模型。"
@@ -357,7 +500,8 @@ def render_sidebar() -> None:
     if start_date >= trade_date:
         st.caption("⚠️ 起始日期应早于分析日期，已按最小窗口（5 天）处理。")
 
-    with st.expander("⚙️ 模型配置", expanded=False):
+    codex_selected = st.session_state.get("llm_provider_idx") == _PROVIDER_KEYS.index("codex_cli")
+    with st.expander("⚙️ 模型配置", expanded=codex_selected):
         _render_llm_config()
 
     tracker = st.session_state.get("tracker")
