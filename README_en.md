@@ -42,13 +42,18 @@ The original TradingAgents is an excellent multi-agent research framework, but i
 
 ### Core Modifications
 
-| Dimension | Original | This Fork |
-|-----------|----------|-----------|
-| **Data Source** | Yahoo Finance / Alpha Vantage | mootdx + Eastmoney + Sina + Tonghuashun (all free direct connections) |
-| **Analyst Roles** | 4 (Market / Sentiment / News / Fundamentals) | **7** (+Policy Analyst / Hot Money Tracker / Lock-up Expiry Monitor) |
-| **Trading Rules** | US Market (T+0, no price limits) | A-share Market (T+1, price limits, minimum lot size, trading hours) |
-| **Output Language** | English | Chinese reports (internal debates remain in English to maintain reasoning quality) |
-| **Alpha Benchmark** | SPY | CSI 300 (沪深300) |
+<table>
+<thead>
+<tr><th nowrap>Dimension</th><th>Original</th><th>This Fork</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap><strong>Data Source</strong></td><td>Yahoo Finance / Alpha Vantage</td><td>mootdx + Eastmoney + Sina + Tonghuashun (all free direct connections)</td></tr>
+<tr><td nowrap><strong>Analyst Roles</strong></td><td>4 (Market / Sentiment / News / Fundamentals)</td><td><strong>7</strong> (+Policy Analyst / Hot Money Tracker / Lock-up Expiry Monitor)</td></tr>
+<tr><td nowrap><strong>Trading Rules</strong></td><td>US Market (T+0, no price limits)</td><td>A-share Market (T+1, price limits, minimum lot size, trading hours)</td></tr>
+<tr><td nowrap><strong>Output Language</strong></td><td>English</td><td>Chinese reports (internal debates remain in English to maintain reasoning quality)</td></tr>
+<tr><td nowrap><strong>Alpha Benchmark</strong></td><td>SPY</td><td>CSI 300 (沪深300)</td></tr>
+</tbody>
+</table>
 
 ---
 ## Comparison with Upstream
@@ -96,35 +101,50 @@ The original TradingAgents is an excellent multi-agent research framework, but i
 
 ### Original 4 Roles (A-share Adapted)
 
-| Role | Responsibilities | Data Tools |
-|------|----------------|------------|
-| 🏪 Market Analyst | K-line patterns, technical indicators, volume-price analysis | `get_stock_data`, `get_indicators` |
-| 💬 Sentiment Analyst | Social media sentiment, retail investor discussion heat | `get_news` |
-| 📰 News Analyst | Industry news, announcements, macro events | `get_news`, `get_global_news`, `get_insider_transactions` |
-| 📊 Fundamental Analyst | Financial statement triad, profitability, valuation | `get_fundamentals`, `get_balance_sheet`, `get_cashflow`, `get_income_statement` |
+<table>
+<thead>
+<tr><th nowrap>Role</th><th>Responsibilities</th><th>Data Tools</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap>🏪 Market Analyst</td><td>K-line patterns, technical indicators, volume-price analysis</td><td><code>get_stock_data</code>, <code>get_indicators</code></td></tr>
+<tr><td nowrap>💬 Sentiment Analyst</td><td>Social media sentiment, retail investor discussion heat</td><td><code>get_news</code></td></tr>
+<tr><td nowrap>📰 News Analyst</td><td>Industry news, announcements, macro events</td><td><code>get_news</code>, <code>get_global_news</code>, <code>get_insider_transactions</code></td></tr>
+<tr><td nowrap>📊 Fundamental Analyst</td><td>Financial statement triad, profitability, valuation</td><td><code>get_fundamentals</code>, <code>get_balance_sheet</code>, <code>get_cashflow</code>, <code>get_income_statement</code></td></tr>
+</tbody>
+</table>
 
 ### A-share Specific 3 Roles (New)
 
-| Role | Responsibilities | Data Tools | Why It's Needed |
-|------|----------------|------------|-----------------|
-| 🏛️ Policy Analyst | Regulatory policy, industrial policy, window guidance | `get_news`, `get_global_news` | A-share is a policy-driven market, policy changes directly impact sector rotation |
-| 🔥 Hot Money Tracker | Dragon-Tiger lists, large order flow, main force capital dynamics | `get_stock_data`, `get_news`, `get_insider_transactions` | Hot money is the core force behind short-term A-share pricing |
-| 🔓 Lock-up Monitor | Restricted share unlocks, major shareholder reductions, equity pledges | `get_insider_transactions`, `get_news`, `get_fundamentals` | Lock-up expiration is a unique, major supply shock factor for A-shares |
+<table>
+<thead>
+<tr><th nowrap>Role</th><th>Responsibilities</th><th>Data Tools</th><th>Why It's Needed</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap>🏛️ Policy Analyst</td><td>Regulatory policy, industrial policy, window guidance</td><td><code>get_news</code>, <code>get_global_news</code></td><td>A-share is a policy-driven market, policy changes directly impact sector rotation</td></tr>
+<tr><td nowrap>🔥 Hot Money Tracker</td><td>Dragon-Tiger lists, large order flow, main force capital dynamics</td><td><code>get_stock_data</code>, <code>get_news</code>, <code>get_insider_transactions</code></td><td>Hot money is the core force behind short-term A-share pricing</td></tr>
+<tr><td nowrap>🔓 Lock-up Monitor</td><td>Restricted share unlocks, major shareholder reductions, equity pledges</td><td><code>get_insider_transactions</code>, <code>get_news</code>, <code>get_fundamentals</code></td><td>Lock-up expiration is a unique, major supply shock factor for A-shares</td></tr>
+</tbody>
+</table>
 
 The reports from all 7 analysts will feed into subsequent Bull/Bear debates and three-way risk debates, ensuring A-share specific factors are integrated throughout the entire decision-making chain.
 ## Data Sources
 
 All free, no API key, no point wall:
 
-| Source | Protocol | Content Provided |
-|------|---------|---------|
-| **mootdx** | TCP 7709 | OHLCV K-lines, financial snapshots, F10 text |
-| **Tencent Finance** | HTTP (`qt.gtimg.cn`) | PE / PB / Market Cap / Turnover Rate (real-time) |
-| **East Money** | HTTP (datacenter / push2) | Dragon & Tiger List, Restricted Share Unlocking, Sector Quotes, Individual Stock Info |
-| **Sina Finance** | HTTP | K-line history, Financial Statements (3 tables) |
-| **Tonghuashun** | HTTP (10jqka) | EPS Consensus Estimates |
-| **Cailianshe** | HTTP (cls.cn) | Global Financial News Flash |
-| **Baidu Stock Market** | HTTP (finance.pae.baidu) | Concept Sector Classification, Capital Flow |
+<table>
+<thead>
+<tr><th nowrap>Source</th><th nowrap>Protocol</th><th>Content Provided</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap><strong>mootdx</strong></td><td nowrap>TCP 7709</td><td>OHLCV K-lines, financial snapshots, F10 text</td></tr>
+<tr><td nowrap><strong>Tencent Finance</strong></td><td nowrap>HTTP (<code>qt.gtimg.cn</code>)</td><td>PE / PB / Market Cap / Turnover Rate (real-time)</td></tr>
+<tr><td nowrap><strong>East Money</strong></td><td nowrap>HTTP (datacenter / push2)</td><td>Dragon &amp; Tiger List, Restricted Share Unlocking, Sector Quotes, Individual Stock Info</td></tr>
+<tr><td nowrap><strong>Sina Finance</strong></td><td nowrap>HTTP</td><td>K-line history, Financial Statements (3 tables)</td></tr>
+<tr><td nowrap><strong>Tonghuashun</strong></td><td nowrap>HTTP (10jqka)</td><td>EPS Consensus Estimates</td></tr>
+<tr><td nowrap><strong>Cailianshe</strong></td><td nowrap>HTTP (cls.cn)</td><td>Global Financial News Flash</td></tr>
+<tr><td nowrap><strong>Baidu Stock Market</strong></td><td nowrap>HTTP (finance.pae.baidu)</td><td>Concept Sector Classification, Capital Flow</td></tr>
+</tbody>
+</table>
 
 > Completely independent of Tushare (point wall), Alpha Vantage (overseas API), Yahoo Finance (does not support A-shares).
 

@@ -103,20 +103,30 @@
 
 ### 原版 4 角色（A 股适配）
 
-| 角色 | 职责 | 数据工具 |
-|------|------|---------|
-| 🏪 市场分析师 | K 线形态、技术指标、量价分析 | `get_stock_data`, `get_indicators` |
-| 💬 舆情分析师 | 社交媒体情绪、散户讨论热度 | `get_news` |
-| 📰 新闻分析师 | 行业新闻、公告、宏观事件 | `get_news`, `get_global_news`, `get_insider_transactions` |
-| 📊 基本面分析师 | 财报三表、盈利能力、估值 | `get_fundamentals`, `get_balance_sheet`, `get_cashflow`, `get_income_statement` |
+<table>
+<thead>
+<tr><th nowrap>角色</th><th nowrap>职责</th><th>数据工具</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap>🏪 市场分析师</td><td nowrap>K 线形态、技术指标、量价分析</td><td><code>get_stock_data</code>, <code>get_indicators</code></td></tr>
+<tr><td nowrap>💬 舆情分析师</td><td nowrap>社交媒体情绪、散户讨论热度</td><td><code>get_news</code></td></tr>
+<tr><td nowrap>📰 新闻分析师</td><td nowrap>行业新闻、公告、宏观事件</td><td><code>get_news</code>, <code>get_global_news</code>, <code>get_insider_transactions</code></td></tr>
+<tr><td nowrap>📊 基本面分析师</td><td nowrap>财报三表、盈利能力、估值</td><td><code>get_fundamentals</code>, <code>get_balance_sheet</code>, <code>get_cashflow</code>, <code>get_income_statement</code></td></tr>
+</tbody>
+</table>
 
 ### A 股特化 3 角色（新增）
 
-| 角色 | 职责 | 数据工具 | 为什么需要 |
-|------|------|---------|-----------|
-| 🏛️ 政策分析师 | 监管政策、产业政策、窗口指导 | `get_news`, `get_global_news` | A 股是政策市，政策变化直接影响板块轮动 |
-| 🔥 游资追踪师 | 龙虎榜、大单流向、主力资金动态 | `get_stock_data`, `get_news`, `get_insider_transactions` | 游资是 A 股短线定价的核心力量 |
-| 🔓 解禁监控师 | 限售股解禁、大股东减持、股权质押 | `get_insider_transactions`, `get_news`, `get_fundamentals` | 解禁是 A 股特有的重大供给冲击因素 |
+<table>
+<thead>
+<tr><th nowrap>角色</th><th>职责</th><th>数据工具</th><th>为什么需要</th></tr>
+</thead>
+<tbody>
+<tr><td nowrap>🏛️ 政策分析师</td><td>监管政策、产业政策、窗口指导</td><td><code>get_news</code>, <code>get_global_news</code></td><td>A 股是政策市，政策变化直接影响板块轮动</td></tr>
+<tr><td nowrap>🔥 游资追踪师</td><td>龙虎榜、大单流向、主力资金动态</td><td><code>get_stock_data</code>, <code>get_news</code>, <code>get_insider_transactions</code></td><td>游资是 A 股短线定价的核心力量</td></tr>
+<tr><td nowrap>🔓 解禁监控师</td><td>限售股解禁、大股东减持、股权质押</td><td><code>get_insider_transactions</code>, <code>get_news</code>, <code>get_fundamentals</code></td><td>解禁是 A 股特有的重大供给冲击因素</td></tr>
+</tbody>
+</table>
 
 所有 7 个 Analyst 的报告会流入后续的 Bull/Bear 辩论和三方风险辩论，确保 A 股特色因素贯穿整条决策链。
 
