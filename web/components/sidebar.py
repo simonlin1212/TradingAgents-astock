@@ -32,6 +32,59 @@ _LLM_CONFIG_PATH = Path(os.path.expanduser("~")) / ".tradingagents" / "llm_confi
 # 恢复时必须写这个索引，只写派生值 subscription_scope 会在渲染时被覆盖回默认。
 _SCOPE_VALUES = ["off", "deep", "all"]
 
+# `MODEL_OPTIONS` 里每个供应商都带一条哨兵项 `("Custom model ID", "custom")`，含义是
+# "自己填模型 ID"。CLI 会就此追问输入（cli/utils.py::_select_model），Web 却把这个
+# 字符串**当成模型名直接发给 API**，于是用户拿到的是一句看不懂的服务端错误：
+#   The supported API model names are deepseek-flash, deepseek-v4-pro,
+#   but you passed custom.
+_CUSTOM_MODEL_SENTINEL = "custom"
+
+
+def _resolve_model_value(value: str, text_key: str, label: str) -> str:
+    """把下拉选中的模型值翻成真正要发给 API 的模型 ID。
+
+    选中哨兵项时渲染一个文本输入框、用它填的 ID——补上 CLI 已有的那一步。输入框复用
+    `custom_quick_model` / `custom_deep_model` 两个键，而这两个键本来就在配置持久化
+    清单里（`_save_llm_config` / `_load_saved_llm_config`），所以填过的 ID 会被记住。
+    """
+    if value != _CUSTOM_MODEL_SENTINEL:
+        return value
+    return st.text_input(
+        label,
+        key=text_key,
+        placeholder="填该供应商实际支持的模型 ID，例: deepseek-v4-pro",
+    ).strip()
+
+
+def validate_model_selection(config: dict | None = None) -> str | None:
+    """拦住「模型 ID 没填」，别让它变成服务端的一句 400。
+
+    模型配置在折叠面板里，选成「Custom model ID」却没填输入框时用户看不到任何提示，
+    请求会带着 'custom' 或空串打出去，报回来的是「你传了 custom」「你传了 .」这种与
+    界面完全对不上号的错误。
+
+    **必须同时挂在唯一的消费点**（web/app.py 拿到 start_analysis 之后、真正起线程之前）：
+    `start_analysis` 有 5 个生产者——侧栏「开始分析」、侧栏「未完成任务」续跑、历史记录、
+    报告页「重新分析」、错误页「继续未完成任务」——只在按钮里守一个，其余四条路径照样
+    把空模型发出去（实测踩过：深模型选「Custom model ID」且留空，走续跑路径，
+    收到 `but you passed .`）。
+
+    `config` 传入**真正要发出去的配置**时校验的就是最终值；不传则退回读 session_state，
+    供侧栏按钮做即时反馈。
+    """
+    source = config if config is not None else st.session_state
+    for label, key in (
+        ("快速思考模型", "quick_think_llm"),
+        ("深度思考模型", "deep_think_llm"),
+    ):
+        model = str(source.get(key) or "").strip()
+        if not model or model == _CUSTOM_MODEL_SENTINEL:
+            return (
+                f"{label}的模型 ID 没填。请在「⚙️ 模型配置」里选一个模型，"
+                "或选「Custom model ID」后填上该供应商实际支持的 ID。"
+            )
+    return None
+
 
 def _load_saved_llm_config() -> None:
     """Restore user's last model selection into session_state defaults."""
@@ -227,7 +280,9 @@ def _render_llm_config() -> None:
             key="quick_model_idx",
             help="用于常规分析任务，速度优先",
         )
-        st.session_state["quick_think_llm"] = quick_values[quick_idx]
+        st.session_state["quick_think_llm"] = _resolve_model_value(
+            quick_values[quick_idx], "custom_quick_model", "快速思考模型 ID"
+        )
 
         deep_idx = st.selectbox(
             "深度思考模型",
@@ -236,7 +291,9 @@ def _render_llm_config() -> None:
             key="deep_model_idx",
             help="用于辩论/决策等需要深度推理的任务",
         )
-        st.session_state["deep_think_llm"] = deep_values[deep_idx]
+        st.session_state["deep_think_llm"] = _resolve_model_value(
+            deep_values[deep_idx], "custom_deep_model", "深度思考模型 ID"
+        )
     else:
         custom_quick = st.text_input("快速思考模型 ID", key="custom_quick_model")
         custom_deep = st.text_input("深度思考模型 ID", key="custom_deep_model")
@@ -371,8 +428,11 @@ def render_sidebar() -> None:
         type="primary",
     ):
         _save_llm_config()  # persist model choice before running
+        model_err = validate_model_selection()
         resolved_code, err = _resolve_user_input(ticker)
-        if err:
+        if model_err:
+            st.error(f"❌ {model_err}")
+        elif err:
             st.error(f"❌ {err}")
         else:
             if resolved_code != ticker.strip():

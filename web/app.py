@@ -22,7 +22,7 @@ from tradingagents.default_config import DEFAULT_CONFIG  # noqa: E402
 
 from web.components.progress_panel import render_progress  # noqa: E402
 from web.components.report_viewer import render_report  # noqa: E402
-from web.components.sidebar import render_sidebar  # noqa: E402
+from web.components.sidebar import render_sidebar, validate_model_selection  # noqa: E402
 from web.history import clear_incomplete_task, extract_signal, load_analysis  # noqa: E402
 from web.progress import ProgressTracker  # noqa: E402
 from web.runner import run_analysis_in_thread  # noqa: E402
@@ -206,28 +206,38 @@ with st.sidebar:
 
 start_req = st.session_state.pop("start_analysis", None)
 if start_req:
-    if start_req.get("fresh"):
-        from tradingagents.graph.checkpointer import clear_checkpoint
+    # 唯一的消费点，所以模型校验挂在这里。`start_analysis` 有 5 个生产者——侧栏
+    # 「开始分析」、侧栏「未完成任务」续跑、历史记录、报告页「重新分析」、错误页
+    # 「继续未完成任务」——只在按钮里守一个，其余四条路径照样把空模型发给 API
+    # （实测踩到：深模型选「Custom model ID」且留空、走续跑路径，收到 `but you passed .`）。
+    # 校验的是 `_build_config()` 的产物，也就是真正要发出去的那份配置。
+    config = _build_config()
+    model_error = validate_model_selection(config)
+    if model_error:
+        st.error(f"❌ {model_error}")
+    else:
+        if start_req.get("fresh"):
+            from tradingagents.graph.checkpointer import clear_checkpoint
 
-        clear_incomplete_task(start_req["ticker"], start_req["trade_date"])
-        clear_checkpoint(
-            DEFAULT_CONFIG["data_cache_dir"],
-            start_req["ticker"],
-            start_req["trade_date"],
+            clear_incomplete_task(start_req["ticker"], start_req["trade_date"])
+            clear_checkpoint(
+                DEFAULT_CONFIG["data_cache_dir"],
+                start_req["ticker"],
+                start_req["trade_date"],
+            )
+
+        tracker = ProgressTracker(
+            ticker=start_req["ticker"],
+            trade_date=start_req["trade_date"],
         )
-
-    tracker = ProgressTracker(
-        ticker=start_req["ticker"],
-        trade_date=start_req["trade_date"],
-    )
-    st.session_state["tracker"] = tracker
-    st.session_state["viewing_history"] = None
-    run_analysis_in_thread(
-        ticker=start_req["ticker"],
-        trade_date=start_req["trade_date"],
-        config=_build_config(),
-        tracker=tracker,
-    )
+        st.session_state["tracker"] = tracker
+        st.session_state["viewing_history"] = None
+        run_analysis_in_thread(
+            ticker=start_req["ticker"],
+            trade_date=start_req["trade_date"],
+            config=config,
+            tracker=tracker,
+        )
 
 
 # ── Main area state machine ─────────────────────────────────────────────────
