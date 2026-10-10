@@ -1192,7 +1192,29 @@ def _get_financial_report_sina(
 
     result = d.get("result", {}).get("data", {})
     items = result.get(source_type, [])
+
+    # [本地补丁 2026-10-05] 新浪已把财报结果从 data.<fzb|lrb|llb>（行列表）
+    # 改成 data.report_list{报告期: {..., data: [{item_title, item_value}]}}。
+    # 旧代码只认前者，导致三张财报表静默返回空表（"No balance sheet data found"）。
+    # 这里同时兼容两种结构，上游再改版也不会退化成空表。
     if not isinstance(items, list) or not items:
+        report_list = result.get("report_list")
+        rows = []
+        if isinstance(report_list, dict):
+            for report_date, payload in report_list.items():
+                if not isinstance(payload, dict):
+                    continue
+                row = {"报告日": report_date}
+                for item in payload.get("data") or []:
+                    if isinstance(item, dict) and item.get("item_title"):
+                        row[item["item_title"]] = item.get("item_value")
+                if len(row) > 1:
+                    rows.append(row)
+        elif isinstance(report_list, list):
+            rows = [x for x in report_list if isinstance(x, dict)]
+        items = rows
+
+    if not items:
         return pd.DataFrame()
 
     df = pd.DataFrame(items)
