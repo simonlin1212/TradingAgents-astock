@@ -506,9 +506,3 @@ This project is based on the [TauricResearch/TradingAgents](https://github.com/T
 This project is a fork of TauricResearch/TradingAgents and inherits the Apache 2.0 license. See [NOTICE](./NOTICE).
 
 **Author:** Simon Lin · X [@linsizhen](https://x.com/linsizhen) · Email: [simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)
-
----
-
-**Open to Opportunities · 看机会｜Shenzhen · Hong Kong · Remote**
-
-I'm Simon, building AI agents and practical tools. Currently open to opportunities in Shenzhen, Hong Kong, or remote — feel free to reach out: [simonlin0423@gmail.com](mailto:simonlin0423@gmail.com)
