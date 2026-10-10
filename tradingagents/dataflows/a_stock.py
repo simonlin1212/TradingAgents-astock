@@ -1561,48 +1561,234 @@ def get_global_news(
 
 # ---- 9. get_insider_transactions ----
 
+_SHAREHOLDER_RESEARCH_URL = (
+    "https://emweb.securities.eastmoney.com/PC_HSF10/ShareholderResearch/PageAjax"
+)
+
+
+def _fmt_shares(value) -> str:
+    """股数格式化（输入单位为「股」）：亿股 / 万股。"""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if abs(n) >= 1e8:
+        return f"{n / 1e8:.2f}亿股"
+    if abs(n) >= 1e4:
+        return f"{n / 1e4:.2f}万股"
+    return f"{n:.0f}股"
+
+
+def _fmt_pct(value, signed: bool = False) -> str:
+    try:
+        return f"{float(value):{'+' if signed else ''}.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def _fmt_hold_change(change, ratio=None, unit: str = "股") -> str:
+    """持股变动：增持/减持 + 数量 + 比例。
+
+    东财的「高管增减持」以股为单位，「股东增减持」以万股为单位，两者不能共用
+    一套换算，所以单位由调用方显式传入。
+    """
+    if change in (None, ""):
+        return "N/A"
+    try:
+        n = float(change)
+    except (TypeError, ValueError):
+        return "N/A"
+    if n == 0:
+        return "未变"
+    qty = _fmt_shares(abs(n)) if unit == "股" else f"{abs(n):.2f}{unit}"
+    pct = f"（{_fmt_pct(ratio, signed=True)}）" if ratio not in (None, "") else ""
+    return f"{'增持' if n > 0 else '减持'} {qty}{pct}"
+
+
+def _fmt_day(value) -> str:
+    """'2026-06-30 00:00:00' -> '2026-06-30'。"""
+    return str(value)[:10] if value else "N/A"
+
+
+def _em_shareholder_research(code: str, max_changes: int = 10) -> str:
+    """东财 HTTP 版股东研究 —— mootdx F10 的兜底（不依赖通达信 TCP）。
+
+    覆盖：实际控制人 / 股东户数变化 / 十大股东 / 十大流通股东 / 高管增减持 /
+    股东增减持。所有请求都走 `_em_get()`，与其它东财接口共享节流与 Keep-Alive。
+    """
+    market = _get_prefix(code).upper()  # SH / SZ / BJ
+    lines: list[str] = []
+
+    r = _em_get(
+        _SHAREHOLDER_RESEARCH_URL,
+        params={"code": f"{market}{code}"},
+        headers={"Referer": "https://emweb.securities.eastmoney.com/"},
+        timeout=15,
+    )
+    d = r.json()
+
+    sjkzr = d.get("sjkzr") or []
+    if sjkzr:
+        lines += ["## 实际控制人", f"- {sjkzr[0].get('HOLDER_NAME', 'N/A')}", ""]
+
+    gdrs = d.get("gdrs") or []
+    if gdrs:
+        lines += [
+            "## 股东户数变化",
+            "报告期 | 股东户数 | 户数环比 | 户均持股 | 筹码集中度",
+        ]
+        for row in gdrs:
+            lines.append(
+                f"{_fmt_day(row.get('END_DATE'))} | "
+                f"{row.get('HOLDER_TOTAL_NUM', 'N/A')} | "
+                f"{_fmt_pct(row.get('TOTAL_NUM_RATIO'), signed=True)} | "
+                f"{_fmt_shares(row.get('AVG_FREE_SHARES'))} | "
+                f"{row.get('HOLD_FOCUS', 'N/A')}"
+            )
+        lines.append("")
+
+    for key, title in (
+        ("sdgd", "十大股东（最新一期）"),
+        ("sdltgd", "十大流通股东（最新一期）"),
+    ):
+        rows = d.get(key) or []
+        if not rows:
+            continue
+        lines += [
+            f"## {title} — {_fmt_day(rows[0].get('END_DATE'))}",
+            "排名 | 股东名称 | 持股 | 占比 | 较上期变动",
+        ]
+        for row in rows[:10]:
+            ratio = row.get("HOLD_NUM_RATIO")
+            if ratio in (None, ""):
+                ratio = row.get("FREE_HOLDNUM_RATIO")
+            lines.append(
+                f"{row.get('HOLDER_RANK', '')} | {row.get('HOLDER_NAME', '')} | "
+                f"{_fmt_shares(row.get('HOLD_NUM'))} | {_fmt_pct(ratio)} | "
+                f"{_fmt_hold_change(row.get('HOLD_NUM_CHANGE'), row.get('CHANGE_RATIO'))}"
+            )
+        lines.append("")
+
+    # 高管增减持：CHANGE_NUM 单位为「股」，CHANGE_RATIO 为变动比例（%）
+    exec_changes = _eastmoney_datacenter(
+        "RPT_EXECUTIVE_HOLD_CHANGE",
+        filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=max_changes,
+        sort_columns="CHANGE_DATE",
+        sort_types="-1",
+    )
+    if exec_changes:
+        lines += [
+            "## 高管增减持",
+            "变动日 | 姓名 | 职务 | 变动 | 变动比例 | 均价(元) | 原因",
+        ]
+        for row in exec_changes:
+            price = row.get("AVERAGE_PRICE")
+            lines.append(
+                f"{_fmt_day(row.get('CHANGE_DATE'))} | "
+                f"{row.get('EXECUTIVE_NAME') or row.get('HOLDER_NAME', '')} | "
+                f"{row.get('POSITION', '')} | "
+                f"{_fmt_hold_change(row.get('CHANGE_NUM'))} | "
+                f"{_fmt_pct(row.get('CHANGE_RATIO'), signed=True)} | "
+                f"{price if price not in (None, '') else 'N/A'} | "
+                f"{row.get('CHANGE_REASON') or 'N/A'}"
+            )
+        lines.append("")
+
+    # 股东增减持：CHANGE_NUM 单位是「万股」且恒为正，方向由 DIRECTION 给出；
+    # CHANGE_RATE 的符号与方向不自洽（实测增持也可能为负），故不予展示。
+    holder_changes = _eastmoney_datacenter(
+        "RPT_SHARE_HOLDER_INCREASE",
+        filter_str=f'(SECURITY_CODE="{code}")',
+        page_size=max_changes,
+        sort_columns="NOTICE_DATE",
+        sort_types="-1",
+    )
+    if holder_changes:
+        lines += [
+            "## 股东增减持",
+            "公告日 | 股东 | 变动 | 变动后持股 | 变动后占比 | 交易均价(元)",
+        ]
+        for row in holder_changes:
+            num = row.get("CHANGE_NUM")
+            qty = f"{float(num):.2f}万股" if num not in (None, "") else "N/A"
+            after = row.get("AFTER_HOLDER_NUM")
+            after_txt = f"{float(after):.2f}万股" if after not in (None, "") else "N/A"
+            price = row.get("TRADE_AVERAGE_PRICE")
+            lines.append(
+                f"{_fmt_day(row.get('NOTICE_DATE'))} | {row.get('HOLDER_NAME', '')} | "
+                f"{row.get('DIRECTION') or ''} {qty} | {after_txt} | "
+                f"{_fmt_pct(row.get('HOLD_RATIO'))} | "
+                f"{price if price not in (None, '') else 'N/A'}"
+            )
+        lines.append("")
+
+    if not lines:
+        return f"No insider/shareholder data found for A-stock '{code}'"
+
+    header = f"# Shareholder Research for {code} (A-stock)\n"
+    header += "# Note: A-stock equivalent of insider transactions\n"
+    header += (
+        "# Data source: 东方财富 F10 HTTP"
+        "（mootdx/通达信不可用时的兜底，不含历史全文）\n"
+    )
+    header += (
+        f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    )
+    return header + "\n".join(lines)
+
 
 def get_insider_transactions(
     ticker: Annotated[str, "A-stock code"],
 ) -> str:
-    """Get shareholder/insider activity via mootdx F10.
+    """Get shareholder/insider activity (F10), with an HTTP fallback.
 
-    Note: A-stock insider transaction data differs from US markets.
-    Uses mootdx F10 shareholder research as the closest equivalent.
+    Note: A-stock insider transaction data differs from US markets. The closest
+    equivalent is F10 shareholder research（十大股东/流通股东、股东户数、高管与
+    大股东增减持）。mootdx F10 优先（含历史全文）；通达信 TCP 不可用时由
+    `_em_shareholder_research` 用东财 HTTP 重建同一组信息。
     """
     code = _normalize_ticker(ticker)
 
     try:
         text = _mootdx_call("F10", symbol=code, name="股东研究")
 
-        if not text or not text.strip():
-            return f"No insider/shareholder data found for A-stock '{code}'"
+        if text and text.strip():
+            header = f"# Shareholder Research for {code} (A-stock)\n"
+            header += "# Note: A-stock equivalent of insider transactions\n"
+            header += "# Data source: mootdx F10\n"
+            header += (
+                f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            )
 
-        header = f"# Shareholder Research for {code} (A-stock)\n"
-        header += "# Note: A-stock equivalent of insider transactions\n"
-        header += "# Data source: mootdx F10\n"
-        header += (
-            f"# Data retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            import re
+
+            sec4_hits = list(re.finditer(r"\r?\n【4\.股东变化】\r?\n", text))
+            if sec4_hits:
+                sec4_pos = sec4_hits[-1].start()
+                before_sec4 = text[:sec4_pos]
+                sec4_text = text[sec4_pos:]
+                cut_at = 2000
+                if len(sec4_text) > cut_at:
+                    sec4_text = (
+                        sec4_text[:cut_at]
+                        + "\n\n(... older shareholder history omitted, "
+                        f"{len(text) - sec4_pos - cut_at} chars truncated ...)"
+                    )
+                text = before_sec4 + sec4_text
+
+            return header + text
+
+    except Exception as e:
+        logger.warning(
+            "mootdx F10 failed for %s: %s, trying eastmoney HTTP fallback", code, e
         )
 
-        import re
-
-        sec4_hits = list(re.finditer(r"\r?\n【4\.股东变化】\r?\n", text))
-        if sec4_hits:
-            sec4_pos = sec4_hits[-1].start()
-            before_sec4 = text[:sec4_pos]
-            sec4_text = text[sec4_pos:]
-            cut_at = 2000
-            if len(sec4_text) > cut_at:
-                sec4_text = (
-                    sec4_text[:cut_at]
-                    + "\n\n(... older shareholder history omitted, "
-                    f"{len(text) - sec4_pos - cut_at} chars truncated ...)"
-                )
-            text = before_sec4 + sec4_text
-
-        return header + text
-
+    # mootdx 不可用（或返回空）时走东财 HTTP。此前这里直接返回 "No ... data found"，
+    # 而 K 线/指标早已有新浪兜底 —— F10 曾是唯一没有备用源的核心数据，导致
+    # 「解禁监控师」在通达信被 stub 的环境下必然缺失「内部人交易」这一必采项。
+    try:
+        return _em_shareholder_research(code)
     except Exception as e:
         return f"Error retrieving insider/shareholder data for {code}: {str(e)}"
 
