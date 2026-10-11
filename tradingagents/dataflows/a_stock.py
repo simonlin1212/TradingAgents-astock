@@ -260,7 +260,14 @@ _TDX_CANARY_SYMBOL = "600519"
 # 全部服务器都验不过之后，隔多久才允许再探一轮（秒）。没有这个负缓存，
 # 每一次取数都会把整张服务器表重探一遍（10 台 × TCP 超时），把"取不到数"
 # 放大成"每个请求卡几十秒"。
-_MOOTDX_RETRY_AFTER_S = 300.0
+#
+# 该结论还会**跨进程持久化**（见 `_mootdx_state_path`）：单进程内的变量挡不住
+# "每个新进程都要重探一遍整表"，而那正是每次分析的固定开场等待。
+# 已经确认自己网络封了 TCP 7709 的用户可以调大它，例如
+# `TRADINGAGENTS_MOOTDX_RETRY_AFTER_S=3600`，把整表探测挪到一小时一次。
+_MOOTDX_RETRY_AFTER_S = float(
+    os.environ.get("TRADINGAGENTS_MOOTDX_RETRY_AFTER_S", "300")
+)
 _mootdx_unavailable_until = 0.0
 
 # ⚠️ 曾经加过「连续 N 台协议失败就停手」的提前退出，已移除：三台远端拒绝**证明不了**
@@ -329,6 +336,57 @@ def _tdx_client_works(client) -> bool:
         return False
 
 
+def _mootdx_state_path() -> str:
+    """跨进程负缓存文件的位置（与 northbound_daily.csv 同目录）。"""
+    from .config import get_config
+
+    config = get_config()
+    cache_dir = config.get(
+        "data_cache_dir", os.path.expanduser("~/.tradingagents/cache")
+    )
+    os.makedirs(cache_dir, exist_ok=True)
+    return os.path.join(cache_dir, "mootdx_unavailable.json")
+
+
+def _load_mootdx_unavailable_until() -> float:
+    """读取跨进程的 mootdx 负缓存；文件缺失、损坏或已过期一律当作"没有缓存"。
+
+    过期时间戳是**绝对时间**，所以它自带有效期语义——进程什么时候读到都不影响判断。
+    """
+    try:
+        with open(_mootdx_state_path(), "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        until = float(data.get("unavailable_until", 0.0))
+    except FileNotFoundError:
+        return 0.0
+    except Exception as e:  # 坏文件不该拦住取数，按"没有缓存"处理
+        logger.debug("读取 mootdx 负缓存失败（按无缓存处理）：%s", e)
+        return 0.0
+    return until if until > time.time() else 0.0
+
+
+def _save_mootdx_unavailable_until(until: float) -> None:
+    """"整张服务器表都验不过"的结论落盘，供后续进程复用。"""
+    try:
+        with open(_mootdx_state_path(), "w", encoding="utf-8") as f:
+            _json.dump({"unavailable_until": until, "checked_at": time.time()}, f)
+    except Exception as e:  # 落盘失败只影响加速，不能影响主流程
+        logger.debug("写入 mootdx 负缓存失败（忽略）：%s", e)
+
+
+def _clear_mootdx_unavailable_state() -> None:
+    """选出可用服务器后清掉落盘的负缓存。
+
+    否则一份尚未过期的旧结论会压住一个已经恢复的网络——那正是"缓存比探测更糟"的情形。
+    """
+    try:
+        os.remove(_mootdx_state_path())
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.debug("清除 mootdx 负缓存失败（忽略）：%s", e)
+
+
 def reset_mootdx_client() -> None:
     """丢弃缓存的 client，让下一次调用重新选服务器。
 
@@ -389,7 +447,8 @@ def _get_mootdx_client():
     裸 factory（老用户 config 里已有 IP）。每一级都必须真正取到数据才会被采用，
     避免把 client 钉死在一台"端口开着但协议不通"的服务器上（#90）。
     全部失败时抛 RuntimeError，并在 `_MOOTDX_RETRY_AFTER_S` 内直接快速失败，
-    不再逐台重探。
+    不再逐台重探——这个"整表都不可用"的结论同时**落盘**，所以后续新进程也不必
+    重付一遍探测开销（见 `_mootdx_state_path`）。
     """
     global _mootdx_client, _mootdx_unavailable_until
     if _mootdx_client is not None:
@@ -402,6 +461,18 @@ def _get_mootdx_client():
             "已尝试全部内置服务器：端口能连上的也没能完成通达信协议取数。"
             "请检查网络环境（代理/防火墙/公司网络常拦 TCP 7709），"
             "或改用 6 位股票代码直接查询。" % (_mootdx_unavailable_until - now)
+        )
+
+    # 跨进程负缓存。没有它，每个新进程的**首次**取数都要把整张服务器表重探一遍
+    # （实测 38 台候选 / 14 台可达 / 59s 用于逐台真实取数），而那正是每次分析的
+    # 固定开场等待——单进程变量只能让同一进程里的后续调用省下这笔钱。
+    persisted_until = _load_mootdx_unavailable_until()
+    if now < persisted_until:
+        _mootdx_unavailable_until = persisted_until
+        raise RuntimeError(
+            "mootdx 通达信服务器暂不可用（%.0f 秒内不再重试；结论来自上一个进程，"
+            "已跳过整表探测）。请检查网络环境（代理/防火墙/公司网络常拦 TCP 7709），"
+            "或改用 6 位股票代码直接查询。" % (persisted_until - now)
         )
 
     from mootdx.quotes import Quotes
@@ -421,7 +492,15 @@ def _get_mootdx_client():
             # （实测这批服务器全是在 factory 里抛 ConnectionReset），下面的快速失败
             # 判断就失效了。
             try:
-                candidate = Quotes.factory(market="std", server=(ip, port))
+                # auto_retry=False：mootdx 的 StdQuotes 默认 auto_retry=True，重试退避是
+                # 0.1/0.5/1/2s。对一台"端口通、但协议被 stub"的服务器，这 3.6s 只是在反复
+                # 确认同一个**确定性**失败——实测逐台验证因此从 ~0.1s 变成 ~4.2s，
+                # 14 台可达服务器就是 59s（整轮 63s），而分析每次冷启动都要付一遍。
+                # 探测阶段关掉它；真实取数失败仍由 `_mootdx_call` → `reset_mootdx_client`
+                # 在应用层处理（换服务器 / 降级到 HTTP 兜底），不依赖 tdxpy 的内部重试。
+                candidate = Quotes.factory(
+                    market="std", server=(ip, port), auto_retry=False
+                )
             except Exception as e:
                 tcp_ok_but_dead += 1
                 logger.debug("mootdx %s:%s 握手失败（%s），换下一台", ip, port, type(e).__name__)
@@ -429,6 +508,7 @@ def _get_mootdx_client():
                 if _tdx_client_works(candidate):
                     logger.info("mootdx server selected: %s:%s", ip, port)
                     keep_bestip()   # 这次的覆写正是我们想要的，别还原
+                    _clear_mootdx_unavailable_state()
                     _mootdx_client = candidate
                     return _mootdx_client
                 tcp_ok_but_dead += 1
@@ -440,16 +520,18 @@ def _get_mootdx_client():
     # `_candidate_tdx_servers()` 已经把 mootdx 自带的完整主机表逐台验证过了，
     # 覆盖面不比 bestip 差，而且每台都是"真取到数才算通过"。
     try:
-        candidate = Quotes.factory(market="std")
+        candidate = Quotes.factory(market="std", auto_retry=False)
     except Exception as e:
         logger.debug("mootdx 裸 factory 失败 — %s", e)
     else:
         if _tdx_client_works(candidate):
             logger.info("mootdx client from 裸 factory（用户已有配置）")
+            _clear_mootdx_unavailable_state()
             _mootdx_client = candidate
             return _mootdx_client
 
     _mootdx_unavailable_until = time.time() + _MOOTDX_RETRY_AFTER_S
+    _save_mootdx_unavailable_until(_mootdx_unavailable_until)
     if tcp_ok_but_dead:
         # 说清楚是"协议被拒"而不是"连不上"——这两者的排查方向完全不同。
         cause = (
