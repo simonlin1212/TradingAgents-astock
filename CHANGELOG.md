@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes within the 0.x line are called out explicitly.
 
+## [0.5.22] — 2026-10-31
+
+### 修复：历史分析混入实时北向资金（#121）
+
+`get_northbound_flow` 在历史日期调用时，此前仍会请求当前北向资金、写入实时快照，
+并输出实时金额及流入 / 流出方向信号，导致报告把今天的数据当成分析日当天的事实。
+
+- 历史分析跳过实时请求和快照写入，正文明确说明实时北向资金已略去；不再输出实时金额、
+  由其生成的方向信号或「当天与历史均值」比较。
+- 启用可选历史缓存时，先剔除分析日之后的数据，再取最近 20 条记录并计算均值；
+  没有符合日期的缓存时明确提示，避免未来数据混入历史结果。
+- 当天分析保留实时请求、快照写入及原有输出。
+
 ## [0.5.21] — 2026-10-11
 
 ### 修复：资产负债表 / 利润表 / 现金流量表此前一直是空表（#116，#117 by @ontheway06）
