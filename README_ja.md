@@ -170,7 +170,9 @@ pip install "google-genai>=1.53.0" "httpx>=0.28.1"
 
 ### 2. LLM の設定
 
-> **API キーが必要です。** Claude や ChatGPT のようなサブスクリプション型のプランは使えません。1 回の分析には 30〜50 回の LLM 呼び出しが必要で、それに対応しているのは API モードだけです。
+> **デフォルトでは API キーによる従量課金です。** 1 回の分析には 30〜50 回の LLM 呼び出しが必要です。
+>
+> **例外（v0.4.0 で追加）：** `pip install -e ".[agentsdk]"` で `[agentsdk]` をインストールすると、一部またはすべてのノードを Claude Agent SDK 経由で**個人の Claude Pro/Max サブスクリプションの利用枠**で実行でき、API の請求は発生しません。詳しくは中国語版 README の「[用个人 Claude 订阅额度](README.md#用个人-claude-订阅额度可选v040-新增)」をご覧ください。
 
 プロジェクトのルートに `.env` ファイルを作成し、選んだプロバイダーに応じて設定します：
 
@@ -322,9 +324,9 @@ streamlit run web/app.py
 
 | パラメーター | デフォルト値 | 説明 |
 |------|--------|------|
-| `llm_provider` | `"minimax"` | LLM プロバイダー：`minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
-| `deep_think_llm` | `"MiniMax-M2.7"` | リサーチマネージャー + ポートフォリオマネージャーが使うモデル |
-| `quick_think_llm` | `"MiniMax-M2.7-highspeed"` | すべてのアナリスト / リサーチャー / トレーダーが使うモデル |
+| `llm_provider` | `"openai"` | LLM プロバイダー：`minimax` / `deepseek` / `qwen` / `glm` / `openai` / `anthropic` / `google` / `xai` / `ollama` |
+| `deep_think_llm` | `"gpt-5.4"` | リサーチマネージャー + ポートフォリオマネージャーが使うモデル |
+| `quick_think_llm` | `"gpt-5.4-mini"` | すべてのアナリスト / リサーチャー / トレーダーが使うモデル |
 | `backend_url` | `None` | カスタムの API エンドポイント / サードパーティの中継ゲートウェイ。Web UI のサイドバー、または `.env` ファイルの `BACKEND_URL` で指定できます。中国国内からプロキシ経由で Claude / OpenAI にアクセスする場合に便利です。**リモートの Ollama に接続する方法でもあります**：`llm_provider` を `ollama` に、`backend_url` を `http://<host>:11434/v1` に設定します。未設定の場合はローカルの `http://localhost:11434/v1` がデフォルトになります（#61） |
 | `role_llms` | `{}` | **オプション**：個々のロールに別のモデルを割り当てます（例：強気と弱気で異なるベンダーのモデルを使う）。空の場合は、これまでどおりすべてのロールが quick/deep のペアを使います。下の「ロールごとのモデル」をご覧ください。#39 |
 | `max_tokens` | `None` | 1 回の応答あたりの最大出力トークン数。`None` = プロバイダー自身のデフォルト。**レポートが文の途中で止まる場合は、まずこれを増やしてください**（これは出力の上限であり、コンテキストウィンドウではありません）。`TRADINGAGENTS_MAX_TOKENS` でも設定できます。#91 |
